@@ -81,7 +81,6 @@ const SECTIONS: NavSection[] = [
   {
     label: "Staff",
     items: [
-      { href: "/staff", label: "Onboarding", icon: UserCheck, adminOnly: true },
       { href: "/tasks", label: "Tasks", icon: CheckSquare },
       { href: "/documents", label: "Scripts", icon: BookOpen },
     ],
@@ -89,6 +88,7 @@ const SECTIONS: NavSection[] = [
   {
     label: "Admin",
     items: [
+      { href: "/staff", label: "Onboarding", icon: UserCheck, adminOnly: true },
       { href: "/reports", label: "Reports", icon: BarChart3, adminOnly: true },
       { href: "/audit", label: "Audit Log", icon: ScrollText, adminOnly: true },
       { href: "/settings", label: "Settings", icon: Settings, adminOnly: true },
