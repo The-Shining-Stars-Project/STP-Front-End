@@ -34,6 +34,9 @@ jobs:
         with:
           name: node-app
           path: .
+          # Next.js builds into .next/, which upload-artifact v4 EXCLUDES by default
+          # as a hidden directory - without this the deployed app has no build and 503s.
+          include-hidden-files: true
 
   deploy:
     runs-on: ubuntu-latest
