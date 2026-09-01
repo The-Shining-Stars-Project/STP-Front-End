@@ -33,7 +33,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: .
+          # Ship source + the .next build but NOT node_modules: the zip round-trip
+          # through artifact storage destroys the .bin symlinks ("next: not found"),
+          # and Oryx on the App Service runs a clean npm install server-side anyway.
+          path: |
+            .
+            !node_modules
           # Next.js builds into .next/, which upload-artifact v4 EXCLUDES by default
           # as a hidden directory - without this the deployed app has no build and 503s.
           include-hidden-files: true
