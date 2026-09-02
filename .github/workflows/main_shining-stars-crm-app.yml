@@ -28,6 +28,11 @@ jobs:
           npm install
           npm run build --if-present
           npm run test --if-present
+        env:
+          # The /backend/* proxy rewrite is resolved at BUILD time and baked into the
+          # build output - the Azure app setting cannot change it at runtime. It must
+          # be present here, where `next build` runs.
+          NEXT_PUBLIC_API_URL: https://ssp-api-hch7ewesbmecehde.westus3-01.azurewebsites.net
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
