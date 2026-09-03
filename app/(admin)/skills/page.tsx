@@ -45,6 +45,12 @@ export default function SkillsFrameworkPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Two frameworks share one taxonomy: the part-time sections (MJC / Manteca PT) and the
+  // Pathways sections. They are rendered as separate groups, and every Pathways card carries
+  // a "Pathways:" prefix so the two "Section 1"s can't be confused (client request).
+  const partTimeAreas = areas.filter((a) => a.track !== "Pathways");
+  const pathwaysAreas = areas.filter((a) => a.track === "Pathways");
+
   const totalSubSkills = areas.reduce((n, a) => n + a.subSkills.length, 0);
   const sectionCount = new Set(
     areas.flatMap((a) => a.subSkills.map((s) => s.sectionNumber))
@@ -91,100 +97,132 @@ export default function SkillsFrameworkPage() {
             Couldn&apos;t load the skills framework. Check that the API is running and try again.
           </div>
         ) : (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
-              gap: "var(--space-4)",
-            }}
-          >
-            {areas.map((area) => {
-              const t = areaTint(area.colorHex);
-              const sec = sectionLabel(area);
-              return (
-                <div
-                  key={area.id}
-                  style={{
-                    border: `var(--bw) solid ${t.border}`,
-                    borderRadius: "var(--r-lg)",
-                    background: "var(--surface)",
-                    overflow: "hidden",
-                    display: "flex",
-                    flexDirection: "column",
-                  }}
-                >
-                  {/* header — carries the area's colour as a top band */}
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "var(--space-2)",
-                      padding: "var(--space-3) var(--space-4)",
-                      background: t.fill,
-                      borderBottom: `var(--bw) solid ${t.border}`,
-                    }}
-                  >
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        width: 12, height: 12, borderRadius: "var(--r-circle)",
-                        background: t.accent, flexShrink: 0,
-                      }}
-                    />
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: "var(--fs-h3)", fontWeight: "var(--w-medium)", color: "var(--fg)", lineHeight: "var(--lh-tight)" }}>
-                        {area.name}
-                      </div>
-                      {sec && (
-                        <div style={{ fontSize: "var(--fs-label)", letterSpacing: "var(--ls-label)", textTransform: "uppercase", color: t.text, marginTop: 2 }}>
-                          {sec}
-                        </div>
-                      )}
-                    </div>
-                    {area.subSkills.length > 0 && (
-                      <span
-                        title={`${area.subSkills.length} sub-skills`}
-                        style={{
-                          fontSize: "var(--fs-meta)", color: t.text,
-                          fontVariantNumeric: "tabular-nums", flexShrink: 0,
-                        }}
-                      >
-                        {area.subSkills.length}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* body — sub-skills, or the Multi-Area note */}
-                  <div style={{ padding: "var(--space-3) var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
-                    {area.subSkills.length === 0 ? (
-                      <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-start", color: "var(--fg-tertiary)", fontSize: "var(--fs-meta)", lineHeight: "var(--lh-body)" }}>
-                        <Layers style={{ width: 14, height: 14, flexShrink: 0, marginTop: 3 }} />
-                        <span>A Games Library tag for cross-cutting activities — measured skills live in the five sections.</span>
-                      </div>
-                    ) : (
-                      area.subSkills.map((s) => (
-                        <div
-                          key={s.id}
-                          style={{
-                            display: "flex", alignItems: "center", gap: "var(--space-2)",
-                            padding: "6px 0", fontSize: "var(--fs-body)", color: "var(--fg)",
-                          }}
-                        >
-                          <Target style={{ width: 13, height: 13, color: t.accent, flexShrink: 0 }} />
-                          <span>{s.name}</span>
-                          {!s.isActive && (
-                            <span className="ss-chip" style={{ marginLeft: "auto" }}>Retired</span>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <>
+            <AreaGroup
+              title="Part-time framework"
+              subtitle="MJC and Manteca PT — the five measured sections plus the Multi-Area tag"
+              list={partTimeAreas}
+            />
+            {pathwaysAreas.length > 0 && (
+              <AreaGroup
+                title="Pathways framework"
+                subtitle="Full-time Pathways sections and pillars — each carries an annual goal and 6-month benchmark"
+                list={pathwaysAreas}
+                prefix="Pathways:"
+              />
+            )}
+          </>
         )}
       </div>
     </div>
+  );
+}
+
+function AreaGroup({ title, subtitle, list, prefix }: {
+  title: string;
+  subtitle: string;
+  list: ObjectiveAreaDto[];
+  prefix?: string;
+}) {
+  return (
+    <section style={{ marginBottom: "var(--space-6)" }}>
+      <div style={{ marginBottom: "var(--space-3)" }}>
+        <h2 style={{ fontSize: "var(--fs-h2)", fontWeight: "var(--w-medium)", margin: 0, lineHeight: "var(--lh-tight)" }}>{title}</h2>
+        <div style={{ fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)", marginTop: 2 }}>{subtitle}</div>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
+          gap: "var(--space-4)",
+        }}
+      >
+        {list.map((area) => {
+          const t = areaTint(area.colorHex);
+          const sec = sectionLabel(area);
+          return (
+            <div
+              key={area.id}
+              style={{
+                border: `var(--bw) solid ${t.border}`,
+                borderRadius: "var(--r-lg)",
+                background: "var(--surface)",
+                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              {/* header — carries the area's colour as a top band */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "var(--space-2)",
+                  padding: "var(--space-3) var(--space-4)",
+                  background: t.fill,
+                  borderBottom: `var(--bw) solid ${t.border}`,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 12, height: 12, borderRadius: "var(--r-circle)",
+                    background: t.accent, flexShrink: 0,
+                  }}
+                />
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: "var(--fs-h3)", fontWeight: "var(--w-medium)", color: "var(--fg)", lineHeight: "var(--lh-tight)" }}>
+                    {prefix && <span style={{ color: t.text }}>{prefix} </span>}
+                    {area.name}
+                  </div>
+                  {sec && (
+                    <div style={{ fontSize: "var(--fs-label)", letterSpacing: "var(--ls-label)", textTransform: "uppercase", color: t.text, marginTop: 2 }}>
+                      {sec}
+                    </div>
+                  )}
+                </div>
+                {area.subSkills.length > 0 && (
+                  <span
+                    title={`${area.subSkills.length} sub-skills`}
+                    style={{
+                      fontSize: "var(--fs-meta)", color: t.text,
+                      fontVariantNumeric: "tabular-nums", flexShrink: 0,
+                    }}
+                  >
+                    {area.subSkills.length}
+                  </span>
+                )}
+              </div>
+
+              {/* body — sub-skills, or the Multi-Area note */}
+              <div style={{ padding: "var(--space-3) var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+                {area.subSkills.length === 0 ? (
+                  <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-start", color: "var(--fg-tertiary)", fontSize: "var(--fs-meta)", lineHeight: "var(--lh-body)" }}>
+                    <Layers style={{ width: 14, height: 14, flexShrink: 0, marginTop: 3 }} />
+                    <span>A Games Library tag for cross-cutting activities — measured skills live in the five sections.</span>
+                  </div>
+                ) : (
+                  area.subSkills.map((s) => (
+                    <div
+                      key={s.id}
+                      style={{
+                        display: "flex", alignItems: "center", gap: "var(--space-2)",
+                        padding: "6px 0", fontSize: "var(--fs-body)", color: "var(--fg)",
+                      }}
+                    >
+                      <Target style={{ width: 13, height: 13, color: t.accent, flexShrink: 0 }} />
+                      <span>{s.name}</span>
+                      {!s.isActive && (
+                        <span className="ss-chip" style={{ marginLeft: "auto" }}>Retired</span>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
