@@ -6,6 +6,7 @@ import { parseLocalDate } from "@/lib/format";
 import { calendarApi } from "@/lib/api/calendar";
 import { usePrograms } from "@/lib/api/hooks";
 import type { CalendarEventDto, ProgramSummaryDto, CreateCalendarEventDto } from "@/lib/types/api";
+import { programPillStyle, programTint } from "@/lib/programColor";
 
 // ── Calendar math ─────────────────────────────────────────────────────────────
 
@@ -119,9 +120,9 @@ function AddEventModal({
               {programs.map(p => {
                 const sel = form.programId === p.id;
                 return (
-                  <button key={p.id} type="button" onClick={() => setForm(f => ({ ...f, programId: p.id }))}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "var(--r-pill)", border: `0.5px solid ${sel ? `var(--${p.slug}-border)` : "var(--border)"}`, background: sel ? `var(--${p.slug}-fill)` : "var(--surface)", color: sel ? `var(--${p.slug})` : "var(--fg-secondary)", cursor: "pointer", fontSize: 13 }}>
-                    <span className={`ss-dot ${p.slug}`} />
+                  <button key={p.id} type="button" aria-pressed={sel} onClick={() => setForm(f => ({ ...f, programId: p.id }))}
+                    style={programPillStyle(p.colorHex, sel)}>
+                    <span className="ss-dot" style={{ background: programTint(p.colorHex).accent }} />
                     {p.name}
                   </button>
                 );

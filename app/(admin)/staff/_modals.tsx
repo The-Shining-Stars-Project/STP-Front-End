@@ -17,6 +17,7 @@ import type {
 
 import { useDialogFocus } from "@/lib/useDialogFocus";
 import { useEscapeKey } from "@/lib/useEscapeKey";
+import { programPillStyle, programTint } from "@/lib/programColor";
 
 // ── Checklist Template ────────────────────────────────────────────────────────
 
@@ -342,10 +343,10 @@ export function AddStaffModal({
               {programs.map((p) => {
                 const checked = form.programIds.includes(p.id);
                 return (
-                  <label key={p.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px", borderRadius: "var(--r-pill)", border: `0.5px solid ${checked ? `var(--${p.slug}-border)` : "var(--border)"}`, background: checked ? `var(--${p.slug}-fill)` : "var(--surface)", color: checked ? `var(--${p.slug})` : "var(--fg-secondary)", cursor: "pointer", fontSize: 13, userSelect: "none" }}>
+                  <label key={p.id} style={{ ...programPillStyle(p.colorHex, checked), padding: "5px 11px", userSelect: "none" }}>
                     <input type="checkbox" style={{ display: "none" }} checked={checked}
                       onChange={(e) => setForm((f) => ({ ...f, programIds: e.target.checked ? [...f.programIds, p.id] : f.programIds.filter((x) => x !== p.id) }))} />
-                    <span className={`ss-dot ${p.slug}`} />
+                    <span className="ss-dot" style={{ background: programTint(p.colorHex).accent }} />
                     {p.name}
                   </label>
                 );

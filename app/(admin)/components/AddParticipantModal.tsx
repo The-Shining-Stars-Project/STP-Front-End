@@ -10,6 +10,7 @@ import type {
   CreateParticipantDto,
   ParticipantStatus,
 } from "@/lib/types/api";
+import { programPillStyle, programTint } from "@/lib/programColor";
 
 type AddParticipantForm = {
   nm: string;
@@ -126,9 +127,9 @@ export default function AddParticipantModal({
               {programs.map((p) => {
                 const selected = form.programId === p.id;
                 return (
-                  <button key={p.id} type="button" onClick={() => setForm((f) => ({ ...f, programId: p.id }))}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "var(--r-pill)", border: `0.5px solid ${selected ? `var(--${p.slug}-border)` : "var(--border)"}`, background: selected ? `var(--${p.slug}-fill)` : "var(--surface)", color: selected ? `var(--${p.slug})` : "var(--fg-secondary)", cursor: "pointer", fontSize: 13 }}>
-                    <span className={`ss-dot ${p.slug}`} />
+                  <button key={p.id} type="button" aria-pressed={selected} onClick={() => setForm((f) => ({ ...f, programId: p.id }))}
+                    style={programPillStyle(p.colorHex, selected)}>
+                    <span className="ss-dot" style={{ background: programTint(p.colorHex).accent }} />
                     {p.name}
                   </button>
                 );
