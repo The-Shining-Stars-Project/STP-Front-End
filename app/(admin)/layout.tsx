@@ -1,4 +1,5 @@
 import AdminSidebar from "../components/AdminSidebar";
+import ProgramTheme from "../components/ProgramTheme";
 import { AuthGuard } from "@/lib/auth/AuthGuard";
 
 /**
@@ -11,6 +12,8 @@ export default function AdminLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <AuthGuard>
+      {/* Per-program colour tokens for every slug, derived from each program's colorHex. */}
+      <ProgramTheme />
       {/* Keyboard users can jump past the sidebar on every admin page. */}
       <a href="#main-content" className="skip-link">Skip to main content</a>
       <div className="adm-shell">
