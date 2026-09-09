@@ -31,6 +31,14 @@ export const STATUS_STYLE: Record<ScriptStatus, { bg: string; color: string }> =
   draft: { bg: "var(--warning-fill)", color: "var(--warning-text)" },
 };
 
+/** The PDF attached to a script — described only; the bytes come from the download endpoint. */
+export type ScriptPdf = {
+  fileName: string;
+  sizeBytes: number;
+  /** API timestamp (UTC, no designator); read it with parseApiTimestamp. */
+  uploadedAt: string | null;
+};
+
 export type Script = {
   /** Backend id. Absent only for the demo fallback rows (INITIAL_SCRIPTS). */
   id?: string;
@@ -45,6 +53,8 @@ export type Script = {
   duration: string;
   lastUsed: string;
   status: ScriptStatus;
+  /** Present when a PDF is attached. */
+  pdf?: ScriptPdf;
 };
 
 export const INITIAL_SCRIPTS: Script[] = [
@@ -202,12 +212,40 @@ export function scriptFromDto(dto: ScriptDto): Script {
     duration: dto.duration ?? "TBD",
     lastUsed: dto.lastUsed ?? "—",
     status: API_STATUS_TO_LOCAL[dto.status] ?? "draft",
+    pdf: dto.hasPdf
+      ? {
+          fileName: dto.pdfFileName ?? "script.pdf",
+          sizeBytes: dto.pdfSizeBytes ?? 0,
+          uploadedAt: dto.pdfUploadedAt,
+        }
+      : undefined,
   };
 }
 
 export const STATUS_FILTERS = ["all", "active", "archived", "draft"] as const;
 export type StatusFilter = (typeof STATUS_FILTERS)[number];
 export const PROG_FILTERS: ("all" | Prog)[] = ["all", "mjc", "pathways", "manteca", "productions"];
+
+// ── PDF rules ─────────────────────────────────────────────────────────────────
+// The backend is the authority (it checks the file header too); these mirror its cheap rules
+// so the two common mistakes — wrong file, huge file — get an answer before any bytes move.
+
+export const MAX_PDF_BYTES = 25 * 1024 * 1024;
+
+/** 1234567 → "1.2 MB". */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Why a chosen file cannot be attached, or null when it can. */
+export function pdfProblem(file: File): string | null {
+  if (!/\.pdf$/i.test(file.name)) return "Only PDF files can be attached.";
+  if (file.size === 0) return "That file is empty.";
+  if (file.size > MAX_PDF_BYTES) return `That PDF is ${formatBytes(file.size)}; the limit is 25 MB.`;
+  return null;
+}
 
 // ── Form state ────────────────────────────────────────────────────────────────
 
@@ -221,6 +259,8 @@ export type FormState = {
   castMax: string;
   duration: string;
   status: ScriptStatus;
+  /** A PDF chosen in the form, uploaded once the script itself has been saved. */
+  pdfFile: File | null;
 };
 
 export const EMPTY_FORM: FormState = {
@@ -233,6 +273,7 @@ export const EMPTY_FORM: FormState = {
   castMax: "",
   duration: "",
   status: "draft",
+  pdfFile: null,
 };
 
 /** Pre-fills the modal form from an existing script (for editing). */
@@ -247,6 +288,6 @@ export function formFromScript(s: Script): FormState {
     castMax: s.castMax != null ? String(s.castMax) : "",
     duration: s.duration === "TBD" ? "" : s.duration,
     status: s.status,
+    pdfFile: null,
   };
 }
-

@@ -931,6 +931,12 @@ export interface ScriptDto {
   duration: string | null;
   lastUsed: string | null;
   programNames: string[];
+  /** Whether a PDF is attached. The bytes come from GET /api/scripts/{id}/pdf, never inline. */
+  hasPdf: boolean;
+  pdfFileName: string | null;
+  pdfSizeBytes: number | null;
+  /** Upload instant, UTC with no designator — read it with parseApiTimestamp. */
+  pdfUploadedAt: string | null;
 }
 
 export interface CreateScriptDto {

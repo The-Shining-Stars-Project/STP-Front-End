@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { scriptsApi } from "@/lib/api/scripts";
 import { programsApi } from "@/lib/api/programs";
+import { ApiError } from "@/lib/api/client";
 import {
   BookOpen,
   Search,
   Plus,
+  AlertCircle,
+  X,
 } from "lucide-react";
 
 import { AddScriptModal, ScriptDetailPanel, ScriptCard } from "./_components";
@@ -24,7 +27,40 @@ import {
   LOCAL_STATUS_TO_API,
   scriptFromDto,
   formFromScript,
+  pdfProblem,
 } from "./_model";
+
+/** Why the last PDF action failed, and for which script — shown until dismissed or retried. */
+type PdfNotice = { scriptId: string; title: string; message: string };
+
+/** Turns an API failure into a sentence a coordinator can act on. */
+function describeError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.detail) return err.detail;
+    if (err.status === 413) return "That file is larger than the 25 MB limit.";
+    if (err.status === 403) return "You do not have permission to change script files.";
+    if (err.status === 404) return "That PDF is no longer available.";
+    return `The request failed (${err.status || "network"}).`;
+  }
+  return err instanceof Error ? err.message : "Something went wrong.";
+}
+
+/**
+ * Hands a downloaded Blob to the browser as a file. An anchor with `download` avoids the
+ * pop-up blocker that a window.open after an await would trip; the object URL is revoked
+ * after a generous delay so a slow disk still gets the bytes.
+ */
+function saveBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -40,6 +76,9 @@ export default function DocumentsPage() {
   const [selectedScript, setSelectedScript] = useState<Script | null>(null);
   // program slug → GUID, so newly-created scripts can be linked to real programs.
   const [progIdBySlug, setProgIdBySlug] = useState<Record<string, string>>({});
+  // PDF work in flight (by script id) and the last failure, if any.
+  const [pdfBusyId, setPdfBusyId] = useState<string | null>(null);
+  const [pdfNotice, setPdfNotice] = useState<PdfNotice | null>(null);
 
   // Load real scripts from the API (#18). If the library is empty or the backend is
   // unreachable, the seeded demo (INITIAL_SCRIPTS) stays on screen so the UI never breaks.
@@ -78,6 +117,65 @@ export default function DocumentsPage() {
     [scripts, query, statusFilter, progFilter]
   );
 
+  /** Swaps in the server's copy of a script wherever it is shown (grid and open panel). */
+  const replaceScript = useCallback((updated: Script) => {
+    setScripts((prev) => prev.map((s) => (s.id && s.id === updated.id ? updated : s)));
+    setSelectedScript((prev) => (prev?.id && prev.id === updated.id ? updated : prev));
+  }, []);
+
+  // ── PDF actions ─────────────────────────────────────────────────────────────
+  // Unlike the metadata edits below, these are NOT optimistic: the server is the only party
+  // that knows whether the bytes landed, so the UI changes when it answers.
+
+  async function uploadPdf(id: string, title: string, file: File) {
+    const problem = pdfProblem(file);
+    if (problem) {
+      setPdfNotice({ scriptId: id, title, message: problem });
+      return;
+    }
+    setPdfNotice(null);
+    setPdfBusyId(id);
+    try {
+      const dto = await scriptsApi.uploadPdf(id, file);
+      replaceScript(scriptFromDto(dto));
+    } catch (err) {
+      setPdfNotice({ scriptId: id, title, message: describeError(err) });
+    } finally {
+      setPdfBusyId(null);
+    }
+  }
+
+  async function removePdf(script: Script) {
+    if (!script.id || !script.pdf) return;
+    if (!window.confirm(`Remove "${script.pdf.fileName}" from ${script.title}?`)) return;
+    setPdfNotice(null);
+    setPdfBusyId(script.id);
+    try {
+      const dto = await scriptsApi.deletePdf(script.id);
+      replaceScript(scriptFromDto(dto));
+    } catch (err) {
+      setPdfNotice({ scriptId: script.id, title: script.title, message: describeError(err) });
+    } finally {
+      setPdfBusyId(null);
+    }
+  }
+
+  async function downloadPdf(script: Script) {
+    if (!script.id || !script.pdf) return;
+    setPdfNotice(null);
+    setPdfBusyId(script.id);
+    try {
+      const { blob, fileName } = await scriptsApi.downloadPdf(script.id);
+      saveBlob(blob, fileName ?? script.pdf.fileName);
+    } catch (err) {
+      setPdfNotice({ scriptId: script.id, title: script.title, message: describeError(err) });
+    } finally {
+      setPdfBusyId(null);
+    }
+  }
+
+  // ── Add / edit ──────────────────────────────────────────────────────────────
+
   function openModal() {
     setEditingScript(null);
     setForm(EMPTY_FORM);
@@ -103,6 +201,7 @@ export default function DocumentsPage() {
     const programIds = form.programs
       .map((p) => progIdBySlug[p])
       .filter((id): id is string => Boolean(id));
+    const pdfFile = form.pdfFile;
 
     const editing = editingScript;
     const nextScript: Script = {
@@ -118,6 +217,9 @@ export default function DocumentsPage() {
       duration: form.duration.trim() || "TBD",
       lastUsed: editing?.lastUsed ?? (form.status === "draft" ? `Planned: ${year}` : "—"),
       status: form.status,
+      // The attachment is not part of the form save; keep what the row already has until
+      // the upload (if any) answers with the new one.
+      pdf: editing?.pdf,
     };
 
     const payload = {
@@ -143,8 +245,12 @@ export default function DocumentsPage() {
       );
       // Persist only if this row is backed by a real library record.
       if (editing.id) {
+        const id = editing.id;
         scriptsApi
-          .update(editing.id, payload)
+          .update(id, payload)
+          .then(() => {
+            if (pdfFile) void uploadPdf(id, nextScript.title, pdfFile);
+          })
           .catch((err) => console.error("Failed to update script in the library:", err));
       }
       return;
@@ -160,6 +266,8 @@ export default function DocumentsPage() {
         // Backfill the real id so the new card can be edited without a page refresh.
         if (created?.id) {
           setScripts((prev) => prev.map((s) => (s === nextScript ? { ...s, id: created.id } : s)));
+          // The PDF could not go up with the form — the script had no id yet. Now it does.
+          if (pdfFile) void uploadPdf(created.id, nextScript.title, pdfFile);
         }
       })
       .catch((err) => console.error("Failed to save script to the library:", err));
@@ -254,6 +362,37 @@ export default function DocumentsPage() {
           </div>
         </div>
 
+        {pdfNotice && (
+          <div
+            role="alert"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 12px",
+              marginBottom: "var(--space-4)",
+              borderRadius: "var(--r-md)",
+              background: "var(--danger-fill)",
+              border: "0.5px solid var(--danger-border)",
+              color: "var(--danger-text)",
+              fontSize: 13,
+            }}
+          >
+            <AlertCircle style={{ width: 14, height: 14, flexShrink: 0 }} />
+            <span style={{ flex: 1 }}>
+              <strong>{pdfNotice.title}:</strong> {pdfNotice.message}
+            </span>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              onClick={() => setPdfNotice(null)}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", padding: 2, display: "flex" }}
+            >
+              <X style={{ width: 14, height: 14 }} />
+            </button>
+          </div>
+        )}
+
         {visible.length > 0 ? (
           <div
             style={{
@@ -267,6 +406,7 @@ export default function DocumentsPage() {
                 key={script.id ?? script.title}
                 script={script}
                 onViewDetails={() => setSelectedScript(script)}
+                onDownloadPdf={script.id ? () => downloadPdf(script) : undefined}
               />
             ))}
           </div>
@@ -310,6 +450,7 @@ export default function DocumentsPage() {
           onClose={closeModal}
           onSubmit={handleSubmit}
           mode={editingScript ? "edit" : "add"}
+          existingPdf={editingScript?.pdf}
         />
       )}
 
@@ -318,9 +459,17 @@ export default function DocumentsPage() {
           script={selectedScript}
           onClose={() => setSelectedScript(null)}
           onEdit={() => openEdit(selectedScript)}
+          onDownloadPdf={selectedScript.id ? () => downloadPdf(selectedScript) : undefined}
+          onUploadPdf={
+            selectedScript.id
+              ? (file) => uploadPdf(selectedScript.id!, selectedScript.title, file)
+              : undefined
+          }
+          onRemovePdf={selectedScript.id ? () => removePdf(selectedScript) : undefined}
+          pdfBusy={pdfBusyId !== null && pdfBusyId === selectedScript.id}
+          pdfError={pdfNotice && pdfNotice.scriptId === selectedScript.id ? pdfNotice.message : null}
         />
       )}
     </div>
   );
 }
-

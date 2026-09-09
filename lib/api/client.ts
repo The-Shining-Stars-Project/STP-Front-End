@@ -9,6 +9,12 @@ const BASE_URL = "/backend";
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 /**
+ * Timeout for requests that carry a file in either direction. A 25 MB script PDF on a
+ * classroom connection can take well over the 15 seconds a JSON call gets.
+ */
+const FILE_TIMEOUT_MS = 120_000;
+
+/**
  * The backend's machine-readable error code, sent alongside the human message on the
  * errors the frontend has to branch on rather than merely display. Matching on the
  * message string is not a contract; this is.
@@ -80,22 +86,17 @@ function isAuthPath(path: string): boolean {
     || path.startsWith("/api/auth/logout");
 }
 
-/** A parsed response body plus the headers it came with. */
-export interface ApiResult<T> {
-  data: T;
-  headers: Headers;
-}
-
 /**
- * Same request pipeline as `apiFetch` — silent refresh, timeout, error shaping — but hands
- * back the response headers as well. Paged endpoints put their pre-paging total in
- * X-Total-Count, and a body-only helper cannot see it. Reading that header works because
- * every call goes through the same-origin /backend rewrite, so CORS (and its
- * exposed-headers allowlist) never enters into it.
+ * Runs one request through the shared pipeline — silent refresh, timeout, error shaping —
+ * and hands back the successful Response untouched. The typed helpers below decide what to
+ * do with the body: JSON for almost everything, bytes for a file download.
  */
-export async function apiFetchWithHeaders<T>(path: string, init?: RequestInit): Promise<ApiResult<T>> {
+async function apiRequest(path: string, init?: RequestInit): Promise<Response> {
+  // A multipart body must NOT be given a Content-Type here: the browser sets it, and it is
+  // the only party that knows the boundary string it is about to write.
+  const isMultipart = typeof FormData !== "undefined" && init?.body instanceof FormData;
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    ...(isMultipart ? {} : { "Content-Type": "application/json" }),
     ...(init?.headers as Record<string, string> | undefined),
   };
 
@@ -138,6 +139,25 @@ export async function apiFetchWithHeaders<T>(path: string, init?: RequestInit): 
     throw new ApiError(res.status, `API ${res.status}: ${path}`, detail, code);
   }
 
+  return res;
+}
+
+/** A parsed response body plus the headers it came with. */
+export interface ApiResult<T> {
+  data: T;
+  headers: Headers;
+}
+
+/**
+ * Same request pipeline as `apiFetch` — silent refresh, timeout, error shaping — but hands
+ * back the response headers as well. Paged endpoints put their pre-paging total in
+ * X-Total-Count, and a body-only helper cannot see it. Reading that header works because
+ * every call goes through the same-origin /backend rewrite, so CORS (and its
+ * exposed-headers allowlist) never enters into it.
+ */
+export async function apiFetchWithHeaders<T>(path: string, init?: RequestInit): Promise<ApiResult<T>> {
+  const res = await apiRequest(path, init);
+
   // 204 No Content (and empty bodies) have nothing to parse.
   if (res.status === 204) return { data: undefined as T, headers: res.headers };
   const text = await res.text();
@@ -148,9 +168,54 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return (await apiFetchWithHeaders<T>(path, init)).data;
 }
 
+/** A downloaded file: the bytes, plus the name the server suggested in Content-Disposition. */
+export interface ApiFile {
+  blob: Blob;
+  fileName: string | null;
+}
+
+/**
+ * Fetches a binary response through the same pipeline as JSON calls. Going through fetch
+ * rather than pointing a link at the URL is what keeps the silent session refresh: a plain
+ * navigation to an expired-cookie endpoint would land the user on a raw 401 in a new tab.
+ */
+export async function apiFetchFile(path: string, init?: RequestInit): Promise<ApiFile> {
+  const res = await apiRequest(path, { signal: AbortSignal.timeout(FILE_TIMEOUT_MS), ...init });
+  return {
+    blob: await res.blob(),
+    fileName: fileNameFromDisposition(res.headers.get("Content-Disposition")),
+  };
+}
+
+/**
+ * Reads the file name out of a Content-Disposition header. ASP.NET's File() writes both the
+ * RFC 5987 form (filename*=UTF-8''..., which survives any character) and the plain quoted
+ * form; prefer the first and fall back to the second.
+ */
+export function fileNameFromDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const encoded = /filename\*\s*=\s*utf-8''([^;]+)/i.exec(header);
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded[1].trim());
+    } catch {
+      // Malformed percent-encoding — fall through to the plain form.
+    }
+  }
+  const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(header);
+  return plain ? plain[1].trim() : null;
+}
+
 export const api = {
   get:    <T>(path: string)               => apiFetch<T>(path),
   post:   <T>(path: string, body: unknown) => apiFetch<T>(path, { method: "POST",   body: JSON.stringify(body) }),
   put:    <T>(path: string, body: unknown) => apiFetch<T>(path, { method: "PUT",    body: JSON.stringify(body) }),
   delete: <T>(path: string)               => apiFetch<T>(path, { method: "DELETE" }),
+
+  /** multipart/form-data POST. The browser sets the Content-Type (with its boundary) itself. */
+  upload: <T>(path: string, form: FormData) =>
+    apiFetch<T>(path, { method: "POST", body: form, signal: AbortSignal.timeout(FILE_TIMEOUT_MS) }),
+
+  /** GET a file as a Blob, with the server's suggested file name. */
+  file: (path: string) => apiFetchFile(path),
 };

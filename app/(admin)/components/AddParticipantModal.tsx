@@ -24,11 +24,26 @@ type AddParticipantForm = {
   referralSource: string;
   tShirtSize: string;
   authExpiry: string;
+  // Full intake — the same set the profile editor (_profile.tsx) offers, so a star can be
+  // entered completely in one pass instead of "add, then open, then edit" (client ask, Sep 2026).
+  ippExpiry: string;
+  allergies: string;
+  anaphylactic: boolean;
+  areasOfConcern: string;
+  scEmail: string;
+  scPhone: string;
+  remind: string;
+  intakeDocs: boolean;
+  diploma: "" | "yes" | "no";
+  secondaryProgramId: string;
+  intakeNotes: string;
 };
 
 const EMPTY_FORM: AddParticipantForm = {
   nm: "", dob: "", programId: "", status: "prospective", sc: "",
   guardianName: "", guardianPhone: "", guardianEmail: "", referralSource: "", tShirtSize: "", authExpiry: "",
+  ippExpiry: "", allergies: "", anaphylactic: false, areasOfConcern: "", scEmail: "", scPhone: "", remind: "",
+  intakeDocs: false, diploma: "", secondaryProgramId: "", intakeNotes: "",
 };
 
 const T_SHIRT_SIZES = ["YS", "YM", "YL", "S", "M", "L", "XL", "2XL"];
@@ -71,6 +86,17 @@ export default function AddParticipantModal({
       referralSource: form.referralSource.trim() || undefined,
       tShirtSize: form.tShirtSize || undefined,
       authorizationExpiry: form.authExpiry || undefined,
+      ippExpiry: form.ippExpiry || undefined,
+      allergies: form.allergies.trim() || undefined,
+      allergyAnaphylactic: form.anaphylactic,
+      areasOfConcern: form.areasOfConcern.trim() || undefined,
+      serviceCoordinatorEmail: form.scEmail.trim() || undefined,
+      serviceCoordinatorPhone: form.scPhone.trim() || undefined,
+      contactInRemind: form.remind.trim() || undefined,
+      intakeDocsSubmitted: form.intakeDocs,
+      hasHighSchoolDiploma: form.diploma === "" ? undefined : form.diploma === "yes",
+      secondaryProgramId: form.secondaryProgramId || undefined,
+      intakeNotes: form.intakeNotes.trim() || undefined,
     };
 
     setSaving(true);
@@ -99,11 +125,11 @@ export default function AddParticipantModal({
       style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "var(--space-4)" }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(480px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
+      <div style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(560px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
           <div>
             <h3 style={{ fontSize: 15, fontWeight: 500, margin: "0 0 2px" }}>Add star</h3>
-            <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>New star will appear in the roster</div>
+            <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>Only name and program are required — everything else can be filled in later on the star&apos;s profile.</div>
           </div>
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4, borderRadius: "var(--r-sm)" }}>
             <X style={{ width: 16, height: 16 }} />
@@ -127,8 +153,25 @@ export default function AddParticipantModal({
               {programs.map((p) => {
                 const selected = form.programId === p.id;
                 return (
-                  <button key={p.id} type="button" aria-pressed={selected} onClick={() => setForm((f) => ({ ...f, programId: p.id }))}
+                  <button key={p.id} type="button" aria-pressed={selected} onClick={() => setForm((f) => ({ ...f, programId: p.id, secondaryProgramId: f.secondaryProgramId === p.id ? "" : f.secondaryProgramId }))}
                     style={programPillStyle(p.colorHex, selected)}>
+                    <span className="ss-dot" style={{ background: programTint(p.colorHex).accent }} />
+                    {p.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <div className="ss-label" style={{ marginBottom: 8 }}>Also enrolled in <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional — dual enrollment</span></div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button type="button" className={`ss-chip${form.secondaryProgramId === "" ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, secondaryProgramId: "" }))}>None</button>
+              {programs.filter((p) => p.id !== form.programId).map((p) => {
+                const sel = form.secondaryProgramId === p.id;
+                return (
+                  <button key={p.id} type="button" aria-pressed={sel} onClick={() => setForm((f) => ({ ...f, secondaryProgramId: sel ? "" : p.id }))}
+                    style={programPillStyle(p.colorHex, sel)}>
                     <span className="ss-dot" style={{ background: programTint(p.colorHex).accent }} />
                     {p.name}
                   </button>
@@ -151,6 +194,17 @@ export default function AddParticipantModal({
           <div>
             <div className="ss-label" style={{ marginBottom: 6 }}>Service coordinator <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
             <input type="text" placeholder="e.g. R. Alvarez" value={form.sc} onChange={(e) => setForm((f) => ({ ...f, sc: e.target.value }))} style={inputStyle} />
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div className="ss-label" style={{ marginBottom: 6 }}>SC email</div>
+              <input type="email" placeholder="name@vmrc.net" value={form.scEmail} onChange={(e) => setForm((f) => ({ ...f, scEmail: e.target.value }))} style={inputStyle} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div className="ss-label" style={{ marginBottom: 6 }}>SC phone</div>
+              <input type="tel" placeholder="(209) 555-0100" value={form.scPhone} onChange={(e) => setForm((f) => ({ ...f, scPhone: e.target.value }))} style={inputStyle} />
+            </div>
           </div>
 
           <div style={{ borderTop: "0.5px solid var(--border)", paddingTop: "var(--space-3)" }}>
@@ -183,9 +237,56 @@ export default function AddParticipantModal({
               </select>
             </div>
             <div style={{ flex: 1 }}>
-              <div className="ss-label" style={{ marginBottom: 6 }}>Authorization expires</div>
+              <div className="ss-label" style={{ marginBottom: 6 }}>POS authorization expires</div>
               <input type="date" value={form.authExpiry} onChange={(e) => setForm((f) => ({ ...f, authExpiry: e.target.value }))} style={inputStyle} />
             </div>
+            <div style={{ flex: 1 }}>
+              <div className="ss-label" style={{ marginBottom: 6 }}>IPP expires</div>
+              <input type="date" value={form.ippExpiry} onChange={(e) => setForm((f) => ({ ...f, ippExpiry: e.target.value }))} style={inputStyle} />
+            </div>
+          </div>
+
+          {/* Health & intake — previously only reachable from the profile's Edit mode. */}
+          <div style={{ borderTop: "0.5px solid var(--border)", paddingTop: "var(--space-3)" }}>
+            <div className="ss-label" style={{ marginBottom: 6 }}>Allergies <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
+            <input type="text" placeholder="e.g. Wheat & gluten" value={form.allergies} onChange={(e) => setForm((f) => ({ ...f, allergies: e.target.value }))} style={inputStyle} />
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--fg-secondary)", cursor: "pointer", marginTop: 6 }}>
+              <input type="checkbox" checked={form.anaphylactic} onChange={(e) => setForm((f) => ({ ...f, anaphylactic: e.target.checked }))} />
+              Anaphylactic
+            </label>
+          </div>
+
+          <div>
+            <div className="ss-label" style={{ marginBottom: 6 }}>Areas of concern <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
+            <input type="text" placeholder="e.g. Sensitive - fire alarm" value={form.areasOfConcern} onChange={(e) => setForm((f) => ({ ...f, areasOfConcern: e.target.value }))} style={inputStyle} />
+          </div>
+
+          <div>
+            <div className="ss-label" style={{ marginBottom: 6 }}>Contact in Remind <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
+            <input type="text" placeholder="Who's set up, and when" value={form.remind} onChange={(e) => setForm((f) => ({ ...f, remind: e.target.value }))} style={inputStyle} />
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div className="ss-label" style={{ marginBottom: 8 }}>Intake docs submitted</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button type="button" className={`ss-chip${form.intakeDocs ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, intakeDocs: true }))}>Yes</button>
+                <button type="button" className={`ss-chip${!form.intakeDocs ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, intakeDocs: false }))}>No</button>
+              </div>
+            </div>
+            <div style={{ flex: 1 }}>
+              <div className="ss-label" style={{ marginBottom: 6 }}>High school diploma</div>
+              <select value={form.diploma} onChange={(e) => setForm((f) => ({ ...f, diploma: e.target.value as AddParticipantForm["diploma"] }))} style={inputStyle}>
+                <option value="">Not recorded</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <div className="ss-label" style={{ marginBottom: 6 }}>Intake notes <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
+            <textarea rows={3} placeholder="Anything worth remembering from intake…" value={form.intakeNotes} onChange={(e) => setForm((f) => ({ ...f, intakeNotes: e.target.value }))} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
           </div>
         </div>
 

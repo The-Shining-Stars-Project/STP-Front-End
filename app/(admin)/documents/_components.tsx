@@ -1,7 +1,6 @@
 "use client";
 
-"use client";
-
+import { useRef, useState } from "react";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import {
   Download,
@@ -15,11 +14,17 @@ import {
   Calendar,
   Tag,
   Pencil,
+  Upload,
+  Trash2,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
 
 import { useDialogFocus } from "@/lib/useDialogFocus";
+import { timestampLabel } from "@/lib/format";
 import {
   type Script,
+  type ScriptPdf,
   type ScriptType,
   type ScriptStatus,
   type Prog,
@@ -27,7 +32,110 @@ import {
   PROG_LABEL,
   TYPE_LABEL,
   STATUS_STYLE,
+  formatBytes,
+  pdfProblem,
 } from "./_model";
+
+const PDF_ACCEPT = "application/pdf,.pdf";
+
+// ── PDF picker (inside the add/edit form) ─────────────────────────────────────
+// Chooses a file now; the page uploads it once the script row exists, because the upload
+// endpoint is a sub-resource of a saved script.
+
+function PdfPicker({
+  file,
+  existing,
+  onPick,
+}: {
+  file: File | null;
+  /** The PDF already attached, in edit mode. */
+  existing?: ScriptPdf;
+  onPick: (file: File | null) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  function choose(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = e.target.files?.[0] ?? null;
+    // Reset so choosing the same file again (after clearing) still fires onChange.
+    e.target.value = "";
+    if (!picked) return;
+    const why = pdfProblem(picked);
+    setProblem(why);
+    onPick(why ? null : picked);
+  }
+
+  const helper = problem
+    ?? (file
+      ? "Uploads when you save."
+      : existing
+        ? `Current file: ${existing.fileName} (${formatBytes(existing.sizeBytes)}). Choosing a file replaces it when you save.`
+        : "PDF only, up to 25 MB.");
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={PDF_ACCEPT}
+        onChange={choose}
+        style={{ display: "none" }}
+        tabIndex={-1}
+        aria-hidden="true"
+      />
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <button type="button" className="ss-btn" onClick={() => inputRef.current?.click()}>
+          <Upload className="ss-btn-icon" />
+          {file ? "Choose a different PDF" : existing ? "Replace PDF" : "Choose PDF"}
+        </button>
+        {file && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              maxWidth: "100%",
+              fontSize: 12,
+              padding: "3px 8px",
+              borderRadius: "var(--r-sm)",
+              background: "var(--bg-secondary)",
+              border: "0.5px solid var(--border)",
+              color: "var(--fg)",
+            }}
+          >
+            <FileText style={{ width: 12, height: 12, flexShrink: 0, color: "var(--fg-tertiary)" }} />
+            <span
+              style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}
+              title={file.name}
+            >
+              {file.name}
+            </span>
+            <span style={{ color: "var(--fg-tertiary)", flexShrink: 0 }}>{formatBytes(file.size)}</span>
+            <button
+              type="button"
+              aria-label="Remove chosen file"
+              onClick={() => {
+                onPick(null);
+                setProblem(null);
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "var(--fg-tertiary)",
+                padding: 0,
+                display: "flex",
+              }}
+            >
+              <X style={{ width: 12, height: 12 }} />
+            </button>
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize: 12, color: problem ? "var(--danger)" : "var(--fg-tertiary)" }}>{helper}</div>
+    </div>
+  );
+}
 
 // ── Add Script Modal ──────────────────────────────────────────────────────────
 
@@ -37,12 +145,15 @@ export function AddScriptModal({
   onClose,
   onSubmit,
   mode = "add",
+  existingPdf,
 }: {
   form: FormState;
   setForm: React.Dispatch<React.SetStateAction<FormState>>;
   onClose: () => void;
   onSubmit: () => void;
   mode?: "add" | "edit";
+  /** In edit mode, the PDF the script already has (so the picker can say "replace"). */
+  existingPdf?: ScriptPdf;
 }) {
   const isEdit = mode === "edit";
   const canSubmit = form.title.trim().length > 0 && form.programs.length > 0;
@@ -320,6 +431,21 @@ export function AddScriptModal({
             />
           </div>
 
+          {/* Script PDF */}
+          <div>
+            <div className="ss-label" style={{ marginBottom: 6 }}>
+              Script PDF{" "}
+              <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>
+                Optional
+              </span>
+            </div>
+            <PdfPicker
+              file={form.pdfFile}
+              existing={isEdit ? existingPdf : undefined}
+              onPick={(file) => setForm((f) => ({ ...f, pdfFile: file }))}
+            />
+          </div>
+
           {/* Status */}
           <div>
             <div className="ss-label" style={{ marginBottom: 8 }}>Status</div>
@@ -374,16 +500,33 @@ export function ScriptDetailPanel({
   script,
   onClose,
   onEdit,
+  onDownloadPdf,
+  onUploadPdf,
+  onRemovePdf,
+  pdfBusy = false,
+  pdfError,
 }: {
   script: Script;
   onClose: () => void;
   onEdit?: () => void;
+  onDownloadPdf?: () => void;
+  onUploadPdf?: (file: File) => void;
+  onRemovePdf?: () => void;
+  /** An upload, download or removal is in flight for this script. */
+  pdfBusy?: boolean;
+  /** Why the last PDF action failed, if it did. */
+  pdfError?: string | null;
 }) {
   useEscapeKey(onClose);
   const panelRef = useDialogFocus<HTMLDivElement>();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const TypeIcon = script.type === "musical" ? Music2 : FileText;
   const { bg, color } = STATUS_STYLE[script.status];
   const leadProg = script.programs[0];
+
+  // Demo rows (no id) exist only when the API is empty or unreachable; nothing to attach to.
+  const canManagePdf = Boolean(script.id && onUploadPdf);
+  const canDownload = Boolean(script.pdf && onDownloadPdf);
 
   const rowStyle: React.CSSProperties = {
     display: "flex",
@@ -407,6 +550,7 @@ export function ScriptDetailPanel({
     gap: 5,
     alignItems: "center",
   };
+  const smallBtnStyle: React.CSSProperties = { padding: "4px 9px", fontSize: 12 };
 
   return (
     <>
@@ -593,12 +737,125 @@ export function ScriptDetailPanel({
           </div>
 
           {/* Type detail */}
-          <div style={{ ...rowStyle, borderBottom: "none" }}>
+          <div style={rowStyle}>
             <div style={labelStyle}>Script type</div>
             <div style={{ ...valueStyle, gap: 4 }}>
               <Tag style={{ width: 13, height: 13, color: "var(--fg-tertiary)" }} />
               {TYPE_LABEL[script.type]}
               {script.original ? " · Original work" : script.adapted ? " · Adapted" : ""}
+            </div>
+          </div>
+
+          {/* Script PDF */}
+          <div style={{ ...rowStyle, borderBottom: "none" }}>
+            <div style={labelStyle}>Script PDF</div>
+            <div
+              style={{
+                ...valueStyle,
+                flexDirection: "column",
+                alignItems: "stretch",
+                gap: 8,
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {script.pdf ? (
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8, minWidth: 0 }}>
+                  <FileText
+                    style={{ width: 14, height: 14, color: "var(--fg-tertiary)", flexShrink: 0, marginTop: 2 }}
+                  />
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                      title={script.pdf.fileName}
+                    >
+                      {script.pdf.fileName}
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>
+                      {formatBytes(script.pdf.sizeBytes)}
+                      {script.pdf.uploadedAt ? ` · Uploaded ${timestampLabel(script.pdf.uploadedAt)}` : ""}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: "var(--fg-tertiary)" }}>
+                  {canManagePdf
+                    ? "No PDF attached yet."
+                    : "No PDF attached. Save this script to the library to attach one."}
+                </div>
+              )}
+
+              {canManagePdf && (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={PDF_ACCEPT}
+                    style={{ display: "none" }}
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (file) onUploadPdf?.(file);
+                    }}
+                  />
+                  {canDownload && (
+                    <button
+                      type="button"
+                      className="ss-btn"
+                      style={smallBtnStyle}
+                      onClick={onDownloadPdf}
+                      disabled={pdfBusy}
+                    >
+                      <Download className="ss-btn-icon" />
+                      Download
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="ss-btn"
+                    style={smallBtnStyle}
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={pdfBusy}
+                  >
+                    {pdfBusy ? (
+                      <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} />
+                    ) : (
+                      <Upload className="ss-btn-icon" />
+                    )}
+                    {pdfBusy ? "Working…" : script.pdf ? "Replace" : "Upload PDF"}
+                  </button>
+                  {script.pdf && onRemovePdf && (
+                    <button
+                      type="button"
+                      className="ss-btn"
+                      style={{ ...smallBtnStyle, color: "var(--danger)" }}
+                      onClick={onRemovePdf}
+                      disabled={pdfBusy}
+                    >
+                      <Trash2 className="ss-btn-icon" />
+                      Remove
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {pdfError && (
+                <div
+                  role="alert"
+                  style={{
+                    display: "flex",
+                    gap: 6,
+                    alignItems: "flex-start",
+                    fontSize: 12,
+                    color: "var(--danger)",
+                  }}
+                >
+                  <AlertCircle style={{ width: 13, height: 13, flexShrink: 0, marginTop: 1 }} />
+                  <span>{pdfError}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -628,10 +885,13 @@ export function ScriptDetailPanel({
           <button
             type="button"
             className="ss-btn"
+            onClick={onDownloadPdf}
+            disabled={!canDownload || pdfBusy}
+            title={canDownload ? undefined : "No PDF attached"}
             style={{ flex: onEdit ? undefined : 1, justifyContent: "center" }}
           >
             <Download className="ss-btn-icon" />
-            Download PDF
+            {script.pdf ? "Download PDF" : "No PDF"}
           </button>
           <button
             type="button"
@@ -648,6 +908,10 @@ export function ScriptDetailPanel({
           from { transform: translateX(100%); }
           to   { transform: translateX(0); }
         }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(360deg); }
+        }
       `}</style>
     </>
   );
@@ -655,10 +919,19 @@ export function ScriptDetailPanel({
 
 // ── Script Card ───────────────────────────────────────────────────────────────
 
-export function ScriptCard({ script, onViewDetails }: { script: Script; onViewDetails: () => void }) {
+export function ScriptCard({
+  script,
+  onViewDetails,
+  onDownloadPdf,
+}: {
+  script: Script;
+  onViewDetails: () => void;
+  onDownloadPdf?: () => void;
+}) {
   const TypeIcon = script.type === "musical" ? Music2 : FileText;
   const { bg, color } = STATUS_STYLE[script.status];
   const leadProg = script.programs[0];
+  const canDownload = Boolean(script.pdf && onDownloadPdf);
 
   return (
     <div className="ss-card" style={{ display: "flex", flexDirection: "column", padding: 0, overflow: "hidden" }}>
@@ -809,13 +1082,17 @@ export function ScriptCard({ script, onViewDetails }: { script: Script; onViewDe
       >
         <button
           type="button"
+          onClick={onDownloadPdf}
+          disabled={!canDownload}
+          title={canDownload ? script.pdf?.fileName : "No PDF attached"}
           style={{
             background: "none",
             border: "0.5px solid var(--border)",
             borderRadius: "var(--r-md)",
             padding: "5px 10px",
-            cursor: "pointer",
-            color: "var(--fg-secondary)",
+            cursor: canDownload ? "pointer" : "default",
+            color: canDownload ? "var(--fg-secondary)" : "var(--fg-tertiary)",
+            opacity: canDownload ? 1 : 0.7,
             display: "inline-flex",
             alignItems: "center",
             gap: 5,
@@ -823,7 +1100,7 @@ export function ScriptCard({ script, onViewDetails }: { script: Script; onViewDe
           }}
         >
           <Download style={{ width: 13, height: 13 }} />
-          Download PDF
+          {script.pdf ? "Download PDF" : "No PDF"}
         </button>
         <button
           type="button"
@@ -848,4 +1125,3 @@ export function ScriptCard({ script, onViewDetails }: { script: Script; onViewDe
     </div>
   );
 }
-
