@@ -75,4 +75,9 @@ jobs:
           app-name: 'Shining-Stars-CRM-App'
           slot-name: 'Production'
           package: .
+          # Wipe the target before writing: OneDeploy otherwise layers each build's
+          # .next chunks over the previous build's, and mixed-generation chunks cause
+          # runtime TypeErrors on whichever routes load a stale chunk.
+          type: zip
+          clean: true
           
