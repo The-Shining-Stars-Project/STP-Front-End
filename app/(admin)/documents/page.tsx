@@ -65,7 +65,12 @@ function saveBlob(blob: Blob, fileName: string) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function DocumentsPage() {
-  const [scripts, setScripts] = useState<Script[]>(INITIAL_SCRIPTS);
+  // The demo rows have no backend id, so edits to them never reach the API — they must
+  // never be what production shows (the same trap as the Development-only program seeder).
+  const [scripts, setScripts] = useState<Script[]>(
+    process.env.NODE_ENV === "development" ? INITIAL_SCRIPTS : []
+  );
+  const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [progFilter, setProgFilter] = useState<"all" | Prog>("all");
@@ -80,8 +85,8 @@ export default function DocumentsPage() {
   const [pdfBusyId, setPdfBusyId] = useState<string | null>(null);
   const [pdfNotice, setPdfNotice] = useState<PdfNotice | null>(null);
 
-  // Load real scripts from the API (#18). If the library is empty or the backend is
-  // unreachable, the seeded demo (INITIAL_SCRIPTS) stays on screen so the UI never breaks.
+  // Load real scripts from the API (#18). The library is shown as the API reports it,
+  // empty included; only in development does an empty/unreachable API leave the demo rows.
   useEffect(() => {
     let active = true;
     (async () => {
@@ -91,14 +96,16 @@ export default function DocumentsPage() {
           programsApi.getAll().catch(() => []),
         ]);
         if (!active) return;
-        if (Array.isArray(dtos) && dtos.length > 0) {
+        if (Array.isArray(dtos) && (dtos.length > 0 || process.env.NODE_ENV !== "development")) {
           setScripts(dtos.map(scriptFromDto));
         }
         setProgIdBySlug(
           Object.fromEntries((programs ?? []).map((p) => [p.slug, p.id]))
         );
       } catch {
-        // Keep the demo data — do not clear the UI on an API error.
+        // Development keeps its demo rows; production keeps whatever it already shows.
+      } finally {
+        if (active) setLoaded(true);
       }
     })();
     return () => {
@@ -243,7 +250,6 @@ export default function DocumentsPage() {
       setScripts((prev) =>
         prev.map((s) => (s === editing || (editing.id && s.id === editing.id) ? nextScript : s))
       );
-      // Persist only if this row is backed by a real library record.
       if (editing.id) {
         const id = editing.id;
         scriptsApi
@@ -252,7 +258,19 @@ export default function DocumentsPage() {
             if (pdfFile) void uploadPdf(id, nextScript.title, pdfFile);
           })
           .catch((err) => console.error("Failed to update script in the library:", err));
+        return;
       }
+      // No backend id (a demo row, or a create whose POST failed): saving it silently
+      // changing nothing on the server is a trap, so adopt it — create the record now.
+      scriptsApi
+        .create(payload)
+        .then((created) => {
+          if (created?.id) {
+            setScripts((prev) => prev.map((s) => (s === nextScript ? { ...s, id: created.id } : s)));
+            if (pdfFile) void uploadPdf(created.id, nextScript.title, pdfFile);
+          }
+        })
+        .catch((err) => console.error("Failed to save script to the library:", err));
       return;
     }
 
@@ -435,9 +453,15 @@ export default function DocumentsPage() {
             >
               <BookOpen style={{ width: 22, height: 22 }} />
             </span>
-            <h3 style={{ fontSize: 15, fontWeight: 500, color: "var(--fg)" }}>No scripts found</h3>
+            <h3 style={{ fontSize: 15, fontWeight: 500, color: "var(--fg)" }}>
+              {loaded ? "No scripts found" : "Loading scripts…"}
+            </h3>
             <p className="ss-meta" style={{ maxWidth: 320 }}>
-              Try adjusting your filters or search query.
+              {loaded
+                ? scripts.length === 0
+                  ? "The library is empty. Add the first script to get started."
+                  : "Try adjusting your filters or search query."
+                : ""}
             </p>
           </div>
         )}
