@@ -68,16 +68,20 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_A6A114750D7C4D748C2FA8A0C9F6241A }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_1F88EE6F4E9343169A2681C7C2F14118 }}
 
+      # Zip explicitly: `type: zip` + `clean: true` needs an actual .zip (a bare
+      # directory fails with EISDIR), and clean is the point - without it each
+      # build's .next chunks layer over the previous build's, and mixed-generation
+      # chunks cause runtime TypeErrors on whichever routes load a stale chunk.
+      - name: Zip package
+        run: zip -q -r app.zip . -x "app.zip"
+
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'Shining-Stars-CRM-App'
           slot-name: 'Production'
-          package: .
-          # Wipe the target before writing: OneDeploy otherwise layers each build's
-          # .next chunks over the previous build's, and mixed-generation chunks cause
-          # runtime TypeErrors on whichever routes load a stale chunk.
+          package: app.zip
           type: zip
           clean: true
           
