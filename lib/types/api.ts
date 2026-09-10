@@ -1188,6 +1188,29 @@ export interface DocumentRecordDto {
   uploadedAt: string | null;
 }
 
+/** Outcome of checking (and optionally committing) a Stars spreadsheet — one shape for both. */
+export interface ParticipantImportReportDto {
+  fileName: string;
+  sourceHash: string;
+  rowCount: number;
+  readyCount: number;
+  problemCount: number;
+  fileProblems: string[];
+  committed: boolean;
+  createdCount: number;
+  rows: ParticipantImportRowDto[];
+}
+
+export interface ParticipantImportRowDto {
+  /** 1-based spreadsheet line, matching what the reviewer sees in Excel. */
+  line: number;
+  name: string;
+  program: string;
+  status: "ready" | "error" | "created";
+  messages: string[];
+  participantId: Guid | null;
+}
+
 export interface CreateDocumentRecordDto {
   documentType: string;
   expiryDate?: string;

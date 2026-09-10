@@ -9,6 +9,7 @@ import type {
   DocumentRecordDto,
   CreateDocumentRecordDto,
   UpdateDocumentRecordDto,
+  ParticipantImportReportDto,
 } from "../types/api";
 
 export const participantsApi = {
@@ -35,4 +36,14 @@ export const participantsApi = {
   },
   downloadDocumentFile: (id: string, docId: string) => api.file(`/api/participants/${id}/documents/${docId}/file`),
   deleteDocumentFile:   (id: string, docId: string) => api.delete<DocumentRecordDto>(`/api/participants/${id}/documents/${docId}/file`),
+
+  // ── Bulk import ─────────────────────────────────────────────────────────────
+  /** Checks a CSV (commit=false) or creates every row (commit=true) — all rows or none. */
+  importCsv: (file: File, commit: boolean) => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    return api.upload<ParticipantImportReportDto>(`/api/participants/import?commit=${commit}`, form);
+  },
+  /** The blank sheet with the columns the import understands. */
+  downloadImportTemplate: () => api.file("/api/participants/import/template"),
 };

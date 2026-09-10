@@ -23,11 +23,13 @@ import {
   ShieldAlert,
   FileX,
   type LucideIcon,
+  Upload,
 } from "lucide-react";
 import { useParticipants, usePrograms } from "@/lib/api/hooks";
 import { auditApi } from "@/lib/api/audit";
 import LoadError from "@/app/components/LoadError";
 import AddParticipantModal from "../components/AddParticipantModal";
+import ImportStarsModal from "../components/ImportStarsModal";
 import type {
   ParticipantSummaryDto,
   ProgramSummaryDto,
@@ -162,6 +164,7 @@ export default function StudentsPage() {
   const data = useMemo(() => (participantsQ.data ?? []).map(dtoToStudent), [participantsQ.data]);
   const programs: ProgramSummaryDto[] = programsQ.data ?? [];
   const [modalOpen, setModalOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [auditWarning, setAuditWarning] = useState<string | null>(null);
 
   // filters
@@ -343,6 +346,10 @@ export default function StudentsPage() {
           <button className="ss-btn ss-btn-primary" type="button" onClick={() => setModalOpen(true)}>
             <UserPlus className="ss-btn-icon" />
             Add star
+          </button>
+          <button className="ss-btn" type="button" onClick={() => setImportOpen(true)} title="Bulk-add stars from a CSV spreadsheet">
+            <Upload className="ss-btn-icon" />
+            Import
           </button>
           <button
             className="ss-btn"
@@ -660,6 +667,7 @@ export default function StudentsPage() {
         </div>
       </div>
 
+      {importOpen && <ImportStarsModal onClose={() => setImportOpen(false)} />}
       {modalOpen && (
         <AddParticipantModal programs={programs} onClose={() => setModalOpen(false)} />
       )}
