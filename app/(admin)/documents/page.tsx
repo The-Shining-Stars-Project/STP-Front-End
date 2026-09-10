@@ -19,6 +19,7 @@ import {
   type StatusFilter,
   type FormState,
   INITIAL_SCRIPTS,
+  progFromName,
   STATUS_FILTERS,
   PROG_FILTERS,
   PROG_LABEL,
@@ -99,8 +100,11 @@ export default function DocumentsPage() {
         if (Array.isArray(dtos) && (dtos.length > 0 || process.env.NODE_ENV !== "development")) {
           setScripts(dtos.map(scriptFromDto));
         }
+        // Key by the form's program bucket, derived from the program's NAME. The org's
+        // programs were hand-created, so their slugs ("manteca-pt") never matched the
+        // form's fixed slugs ("manteca") and every link silently dropped on save.
         setProgIdBySlug(
-          Object.fromEntries((programs ?? []).map((p) => [p.slug, p.id]))
+          Object.fromEntries((programs ?? []).map((p) => [progFromName(p.name), p.id]))
         );
       } catch {
         // Development keeps its demo rows; production keeps whatever it already shows.

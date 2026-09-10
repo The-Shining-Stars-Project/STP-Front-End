@@ -305,6 +305,11 @@ export function AddScriptModal({
             <div className="ss-label" style={{ marginBottom: 8 }}>
               Programs{" "}
               <span style={{ color: "var(--danger)", fontWeight: 400 }}>*</span>
+              {form.programs.length === 0 && (
+                <span style={{ marginLeft: 8, color: "var(--danger)", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                  Choose at least one to enable Save
+                </span>
+              )}
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {(["mjc", "pathways", "manteca", "productions"] as Prog[]).map((p) => {
@@ -484,6 +489,8 @@ export function AddScriptModal({
             type="button"
             onClick={onSubmit}
             disabled={!canSubmit}
+            title={canSubmit ? undefined : "Add a title and choose at least one program"}
+            style={canSubmit ? undefined : { opacity: 0.45, cursor: "not-allowed" }}
           >
             <Check className="ss-btn-icon" />
             {isEdit ? "Save changes" : "Add script"}
