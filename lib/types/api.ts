@@ -1180,6 +1180,26 @@ export interface DocumentRecordDto {
   documentType: string;
   expiryDate: string | null;
   isComplete: boolean;
+  /** The attached scan, described but never embedded — bytes come from .../documents/{id}/file. */
+  hasFile: boolean;
+  fileName: string | null;
+  contentType: string | null;
+  sizeBytes: number | null;
+  uploadedAt: string | null;
+}
+
+export interface CreateDocumentRecordDto {
+  documentType: string;
+  expiryDate?: string;
+  isComplete?: boolean;
+}
+
+export interface UpdateDocumentRecordDto {
+  documentType?: string;
+  expiryDate?: string;
+  /** True clears the stored expiry (omitting expiryDate alone means "unchanged"). */
+  clearExpiry?: boolean;
+  isComplete?: boolean;
 }
 
 export interface OnboardingItemDto {
@@ -1189,6 +1209,12 @@ export interface OnboardingItemDto {
   isCompleted: boolean;
   completedDate: string | null;
   expiryDate: string | null;
+  /** The paperwork behind the item — bytes come from /api/staff/{id}/onboarding/{itemId}/file. */
+  hasFile: boolean;
+  fileName: string | null;
+  contentType: string | null;
+  sizeBytes: number | null;
+  uploadedAt: string | null;
 }
 
 // ── Audit log ─────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { parseLocalDate } from "@/lib/format";
 import { useQueryClient } from "@tanstack/react-query";
@@ -15,8 +15,12 @@ import {
   AlertCircle,
   ListChecks,
   Pencil,
+  Upload,
+  Paperclip,
+  X,
 } from "lucide-react";
 import { staffApi } from "@/lib/api/staff";
+import { DOCUMENT_ACCEPT, documentProblem, formatBytes, saveBlob } from "@/lib/files";
 import { auditApi } from "@/lib/api/audit";
 import { useStaff, usePrograms, useChecklistTemplate, queryKeys } from "@/lib/api/hooks";
 import LoadError from "@/app/components/LoadError";
@@ -176,6 +180,58 @@ function StaffPageInner() {
   function openModal() { setForm(EMPTY_STAFF_FORM); setModalOpen(true); }
   function closeModal() { setModalOpen(false); }
 
+  // Paperwork behind a checklist item. One hidden file input serves every row; the row that
+  // asked for it is remembered until the browser answers.
+  const fileInput = useRef<HTMLInputElement>(null);
+  const pendingFile = useRef<{ staffId: string; item: OnboardingItemDto } | null>(null);
+
+  function pickItemFile(staffId: string, item: OnboardingItemDto) {
+    pendingFile.current = { staffId, item };
+    fileInput.current?.click();
+  }
+
+  async function onItemFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    e.target.value = "";
+    const target = pendingFile.current;
+    pendingFile.current = null;
+    if (!file || !target) return;
+    const why = documentProblem(file);
+    if (why) { setSaveError(why); return; }
+    await withItemBusy(target.staffId, target.item, async () => {
+      const updated = await staffApi.uploadOnboardingFile(target.staffId, target.item.id, file);
+      setDetailCache((prev) => ({ ...prev, [target.staffId]: updated }));
+    }, "Couldn't upload the file — try again.");
+  }
+
+  async function downloadItemFile(staffId: string, item: OnboardingItemDto) {
+    await withItemBusy(staffId, item, async () => {
+      const file = await staffApi.downloadOnboardingFile(staffId, item.id);
+      saveBlob(file.blob, file.fileName ?? item.fileName ?? "document");
+    }, "Couldn't download the file — try again.");
+  }
+
+  async function removeItemFile(staffId: string, item: OnboardingItemDto) {
+    if (!window.confirm(`Remove "${item.fileName}" from ${item.label}?`)) return;
+    await withItemBusy(staffId, item, async () => {
+      const updated = await staffApi.deleteOnboardingFile(staffId, item.id);
+      setDetailCache((prev) => ({ ...prev, [staffId]: updated }));
+    }, "Couldn't remove the file — try again.");
+  }
+
+  async function withItemBusy(staffId: string, item: OnboardingItemDto, action: () => Promise<void>, fallback: string) {
+    if (togglingIds.has(item.id)) return;
+    setTogglingIds((prev) => new Set(prev).add(item.id));
+    setSaveError(null);
+    try {
+      await action();
+    } catch (e) {
+      setSaveError(e instanceof ApiError && e.detail ? e.detail : fallback);
+    } finally {
+      setTogglingIds((prev) => { const next = new Set(prev); next.delete(item.id); return next; });
+    }
+  }
+
   async function handleItemToggle(staffId: string, item: OnboardingItemDto) {
     if (togglingIds.has(item.id)) return;
     setTogglingIds((prev) => new Set(prev).add(item.id));
@@ -333,6 +389,15 @@ function StaffPageInner() {
 
   return (
     <div className="adm-main">
+      <input
+        ref={fileInput}
+        type="file"
+        accept={DOCUMENT_ACCEPT}
+        onChange={onItemFileChosen}
+        style={{ display: "none" }}
+        tabIndex={-1}
+        aria-hidden="true"
+      />
       <div className="adm-topbar">
         <div className="titles">
           <h1>Staff Onboarding</h1>
@@ -533,6 +598,52 @@ function StaffPageInner() {
                                     onChange={(e) => handleItemExpiry(s.id, item, e.target.value)}
                                     style={{ fontSize: 11, padding: "2px 4px", border: "0.5px solid var(--border)", borderRadius: "var(--r-sm)", background: "var(--surface)", color: "var(--fg-tertiary)", width: 118 }}
                                   />
+                                  {item.hasFile && (
+                                    <span
+                                      title={`${item.fileName}${item.sizeBytes != null ? ` (${formatBytes(item.sizeBytes)})` : ""}`}
+                                      style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--fg-secondary)", maxWidth: 180 }}
+                                    >
+                                      <Paperclip style={{ width: 12, height: 12, flexShrink: 0 }} />
+                                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.fileName}</span>
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="ss-btn"
+                                    title={item.hasFile ? "Replace file" : "Attach file (PDF, PNG or JPG)"}
+                                    aria-label={`${item.hasFile ? "Replace" : "Attach"} file: ${item.label}`}
+                                    disabled={togglingIds.has(item.id)}
+                                    onClick={() => pickItemFile(s.id, item)}
+                                    style={{ padding: "2px 6px" }}
+                                  >
+                                    <Upload className="ss-btn-icon" />
+                                  </button>
+                                  {item.hasFile && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="ss-btn"
+                                        title="Download file"
+                                        aria-label={`Download file: ${item.label}`}
+                                        disabled={togglingIds.has(item.id)}
+                                        onClick={() => downloadItemFile(s.id, item)}
+                                        style={{ padding: "2px 6px" }}
+                                      >
+                                        <Download className="ss-btn-icon" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="ss-btn"
+                                        title="Remove file"
+                                        aria-label={`Remove file: ${item.label}`}
+                                        disabled={togglingIds.has(item.id)}
+                                        onClick={() => removeItemFile(s.id, item)}
+                                        style={{ padding: "2px 6px" }}
+                                      >
+                                        <X className="ss-btn-icon" />
+                                      </button>
+                                    </>
+                                  )}
                                 </span>
                               </div>
                             ))}

@@ -9,7 +9,6 @@ import {
   ArrowLeft,
   Pencil,
   Check,
-  X,
   Trash2,
   Loader2,
   CalendarDays,
@@ -28,6 +27,7 @@ import { participantsApi } from "@/lib/api/participants";
 import { usePrograms } from "@/lib/api/hooks";
 import ArtsProfileWidget from "./_arts_profile";
 import TrackerWidget from "./_tracker";
+import DocumentsWidget from "./_documents";
 import type {
   ParticipantDetailDto,
   ProgramSummaryDto,
@@ -558,32 +558,8 @@ export default function ParticipantProfile({ id }: { id: string }) {
             )]}
           />
 
-          {/* documents (read-only) */}
-          <div className="widget">
-            <div className="widget-head">
-              <FileText className="ico" style={{ color: "var(--primary)" }} />
-              <h3>Documents</h3>
-            </div>
-            <div className="widget-body">
-              {detail.documents.length === 0 ? (
-                <div style={{ padding: "16px 0", textAlign: "center", fontSize: 13, color: "var(--fg-tertiary)" }}>
-                  No documents on file yet.
-                </div>
-              ) : (
-                detail.documents.map((d) => (
-                  <div className="list-row" key={d.id}>
-                    <div className="grow">
-                      <div className="nm">{d.documentType}</div>
-                      <div className="sub">{d.expiryDate ? `Expires ${fmtDate(d.expiryDate)}` : "No expiry"}</div>
-                    </div>
-                    <span className={`ss-badge ${d.isComplete ? "is-active" : "is-attention"}`}>
-                      {d.isComplete ? <><CheckCircle2 />Complete</> : <><AlertCircle />Incomplete</>}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
+          {/* documents — intake paperwork with attached scans */}
+          <DocumentsWidget key={id} participantId={id} initial={detail.documents} />
         </div>
       </div>
 
