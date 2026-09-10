@@ -8,13 +8,13 @@ import {
   CalendarRange,
   UserCog,
   UserCheck,
-  MapPin,
   Users,
   Sparkles,
   ChevronRight,
   type LucideIcon,
 } from "lucide-react";
 import { usePrograms, useReferenceLists } from "@/lib/api/hooks";
+import SitesEditor from "./_sites";
 import type { ProgramSummaryDto, ReferenceListsDto } from "@/lib/types/api";
 
 // ── Management surfaces ─────────────────────────────────────────────────────────
@@ -132,11 +132,9 @@ export default function SettingsPage() {
                   )) : <span className="ss-meta" style={{ color: "var(--fg-tertiary)" }}>None yet</span>}
                 </ChipRow>
 
-                <ChipRow icon={<MapPin style={{ width: 12, height: 12 }} />} label="Sites">
-                  {lists?.sites.length ? lists.sites.map((s) => (
-                    <span key={s.id} className="ss-chip ss-chip--static">{s.name}</span>
-                  )) : <span className="ss-meta" style={{ color: "var(--fg-tertiary)" }}>None yet</span>}
-                </ChipRow>
+                {/* Sites are the one thing edited here rather than on their own page: add,
+                    rename, retire. Everything else on this page stays a map to elsewhere. */}
+                <SitesEditor />
 
                 <ChipRow icon={<Users style={{ width: 12, height: 12 }} />} label="Star Groups">
                   {lists?.starGroups.length ? lists.starGroups.map((g) => (

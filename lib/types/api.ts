@@ -1058,6 +1058,18 @@ export interface SiteDto {
   name: string;
   slug: string;
   sortOrder: number;
+  /** Retired sites leave every dropdown but stay on historical rosters and events. */
+  isActive: boolean;
+}
+
+export interface CreateSiteDto {
+  name: string;
+}
+
+export interface UpdateSiteDto {
+  name?: string;
+  sortOrder?: number;
+  isActive?: boolean;
 }
 
 export interface StarGroupDto {
@@ -1152,6 +1164,9 @@ export interface RosterEntryDto {
   assignmentId: Guid | null;
   siteId: Guid | null;
   siteName: string | null;
+  /** Every site the Star attends this term, primary first. */
+  siteIds: Guid[];
+  siteNames: string[];
   starGroupId: Guid | null;
   starGroupName: string | null;
   assignedStaffId: Guid | null;
@@ -1166,7 +1181,10 @@ export interface UpsertRosterAssignmentDto {
   participantId: Guid;
   quarter: number;
   year: number;
+  /** Single-site form, still accepted; ignored when siteIds is given. */
   siteId?: Guid | null;
+  /** Every site the Star attends this term, primary first. Empty clears them. */
+  siteIds?: Guid[];
   starGroupId?: Guid | null;
   assignedStaffId?: Guid | null;
   countedInRatio: boolean;

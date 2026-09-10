@@ -37,12 +37,21 @@ export default function RosterPage() {
   // Reference lists + staff load once.
   // Roster reloads on term change.
   useEffect(() => {
-    setLoading(true);
+    let active = true;
     rosterApi.get(year, quarter)
-      .then((e) => { setEntries(e); setError(false); })
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
+      .then((e) => { if (active) { setEntries(e); setError(false); } })
+      .catch(() => { if (active) setError(true); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [year, quarter]);
+
+  // Term changes flip the loading flag here, not inside the effect, so the effect only
+  // starts the request (react-hooks/set-state-in-effect).
+  function changeTerm(nextYear: number, nextQuarter: number) {
+    setLoading(true);
+    setYear(nextYear);
+    setQuarter(nextQuarter);
+  }
 
   function save(entry: RosterEntryDto, patch: Partial<RosterEntryDto>) {
     const merged = { ...entry, ...patch };
@@ -52,7 +61,7 @@ export default function RosterPage() {
       .upsert({
         participantId: entry.participantId,
         year, quarter,
-        siteId: merged.siteId,
+        siteIds: merged.siteIds,
         starGroupId: merged.starGroupId,
         assignedStaffId: merged.assignedStaffId,
         countedInRatio: merged.countedInRatio,
@@ -74,7 +83,16 @@ export default function RosterPage() {
     return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [entries]);
 
-  const assigned = entries.filter((e) => e.starGroupId && e.siteId).length;
+  const assigned = entries.filter((e) => e.starGroupId && e.siteIds.length > 0).length;
+
+  // A Star can attend more than one site in a term (client ask, Sep 2026). Click a chip to
+  // add or remove it; the first listed is the primary site everything single-site shows.
+  function toggleSite(entry: RosterEntryDto, siteId: string) {
+    const has = entry.siteIds.includes(siteId);
+    const siteIds = has ? entry.siteIds.filter((id) => id !== siteId) : [...entry.siteIds, siteId];
+    const siteNames = siteIds.map((id) => sites.find((s) => s.id === id)?.name ?? "").filter(Boolean);
+    save(entry, { siteIds, siteNames, siteId: siteIds[0] ?? null, siteName: siteNames[0] ?? null });
+  }
   const counted = entries.filter((e) => e.countedInRatio).length;
 
   return (
@@ -85,14 +103,14 @@ export default function RosterPage() {
         </div>
         <div className="right" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {QUARTERS.map((qn) => (
-            <button key={qn} type="button" className={`ss-chip${quarter === qn ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setQuarter(qn)}>
+            <button key={qn} type="button" className={`ss-chip${quarter === qn ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => changeTerm(year, qn)}>
               Q{qn}
             </button>
           ))}
           <input
             type="number"
             value={year}
-            onChange={(e) => setYear(Number(e.target.value) || year)}
+            onChange={(e) => changeTerm(Number(e.target.value) || year, quarter)}
             style={{ ...selectStyle, width: 80, maxWidth: 80, padding: "6px 8px" }}
             aria-label="Year"
           />
@@ -158,10 +176,24 @@ export default function RosterPage() {
                             </select>
                           </td>
                           <td style={{ padding: "6px 12px" }}>
-                            <select style={selectStyle} value={e.siteId ?? ""} onChange={(ev) => save(e, { siteId: ev.target.value || null })}>
-                              <option value="">—</option>
-                              {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                            </select>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }} title="Click to add or remove a site. The first is the primary.">
+                              {sites.map((s) => {
+                                const on = e.siteIds.includes(s.id);
+                                return (
+                                  <button
+                                    key={s.id}
+                                    type="button"
+                                    className={`ss-chip${on ? " is-active" : ""}`}
+                                    aria-pressed={on}
+                                    onClick={() => toggleSite(e, s.id)}
+                                    style={{ cursor: "pointer", fontSize: 11, padding: "2px 8px" }}
+                                  >
+                                    {s.name}
+                                  </button>
+                                );
+                              })}
+                              {sites.length === 0 && <span style={{ color: "var(--fg-tertiary)", fontSize: 12 }}>No sites yet</span>}
+                            </div>
                           </td>
                           <td style={{ padding: "6px 12px" }}>
                             <select style={selectStyle} value={e.assignedStaffId ?? ""} onChange={(ev) => save(e, { assignedStaffId: ev.target.value || null })}>
