@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { MapPin, Plus, Pencil, Check, X, Loader2, Archive, ArchiveRestore, AlertCircle } from "lucide-react";
+import { MapPin, Plus, Pencil, Check, X, Loader2, Archive, AlertCircle } from "lucide-react";
 import { sitesApi } from "@/lib/api/sites";
 import { ApiError } from "@/lib/api/client";
 import type { SiteDto } from "@/lib/types/api";
@@ -19,8 +19,10 @@ const inputStyle: React.CSSProperties = {
 
 /**
  * The organisation's sites, editable in place: add a location, rename one, retire it when
- * it closes (it leaves every dropdown but stays on historical rosters and events), and
- * bring it back if it reopens. Slugs never change on rename — theming and links key on them.
+ * it closes (it leaves every dropdown but stays on historical rosters and events). Retired
+ * sites are not listed here — that read as confusing — adding a site by the same name brings
+ * it back (the API revives the retired row rather than creating a twin). Slugs never change
+ * on rename — theming and links key on them.
  */
 export default function SitesEditor() {
   const queryClient = useQueryClient();
@@ -88,14 +90,13 @@ export default function SitesEditor() {
   }
 
   async function setActive(site: SiteDto, isActive: boolean) {
-    if (!isActive && !window.confirm(`Retire ${site.name}? It leaves every dropdown but stays on past rosters and events. You can bring it back later.`)) return;
+    if (!isActive && !window.confirm(`Retire ${site.name}? It leaves every dropdown but stays on past rosters and events. To bring it back later, add a site with the same name.`)) return;
     await run(site.id, async () => {
       replace(await sitesApi.update(site.id, { isActive }));
     }, isActive ? "Couldn't restore the site — try again." : "Couldn't retire the site — try again.");
   }
 
   const active = (sites ?? []).filter((s) => s.isActive);
-  const retired = (sites ?? []).filter((s) => !s.isActive);
 
   return (
     <div style={{ display: "flex", alignItems: "baseline", gap: "var(--space-3)", flexWrap: "wrap" }}>
@@ -171,20 +172,6 @@ export default function SitesEditor() {
                 <Plus className="ss-btn-icon" />Add site
               </button>
             )}
-          </div>
-        )}
-        {retired.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-            <span className="ss-meta" style={{ color: "var(--fg-tertiary)", fontSize: 11 }}>Retired:</span>
-            {retired.map((s) => (
-              <span key={s.id} className="ss-chip ss-chip--static" style={{ display: "inline-flex", alignItems: "center", gap: 6, opacity: 0.6 }}>
-                {s.name}
-                <button type="button" onClick={() => setActive(s, true)} title="Bring this site back" aria-label={`Restore ${s.name}`} disabled={busyId === s.id}
-                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 0, display: "flex" }}>
-                  <ArchiveRestore style={{ width: 11, height: 11 }} />
-                </button>
-              </span>
-            ))}
           </div>
         )}
       </div>
