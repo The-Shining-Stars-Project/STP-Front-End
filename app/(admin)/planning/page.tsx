@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Target, Check } from "lucide-react";
 import { planningApi } from "@/lib/api/planning";
 import { useMyPrograms, useStaff, useObjectiveAreas } from "@/lib/api/hooks";
+import ProgramPills from "../components/ProgramPills";
 import type {
   PerStarPlanDto,
   ProgramSummaryDto,
@@ -101,16 +102,7 @@ export default function PlanningPage() {
 
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: "var(--space-3)" }}>
           <span className="ss-label" style={{ color: "var(--fg-tertiary)", marginRight: 2 }}>Program</span>
-          <button type="button" className={`ss-chip${programId === null ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setProgramId(null)}>All</button>
-          {programs.map((p) => (
-            <button key={p.id} type="button" onClick={() => setProgramId(p.id)}
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px", borderRadius: "var(--r-pill)", cursor: "pointer", fontSize: 13,
-                border: `0.5px solid ${programId === p.id ? `var(--${p.slug}-border)` : "var(--border)"}`,
-                background: programId === p.id ? `var(--${p.slug}-fill)` : "var(--surface)",
-                color: programId === p.id ? `var(--${p.slug})` : "var(--fg-secondary)" }}>
-              <span className={`ss-dot ${p.slug}`} />{p.name}
-            </button>
-          ))}
+          <ProgramPills programs={programs} value={programId} onChange={setProgramId} allLabel="All" compact />
         </div>
 
         {error ? (
