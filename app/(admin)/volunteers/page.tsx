@@ -2,13 +2,15 @@
 
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { UserPlus, Search, X, Check, AlertCircle, Pencil, CheckCircle2, MinusCircle, Loader2 } from "lucide-react";
+import { UserPlus, Search, X, Check, AlertCircle, Pencil, CheckCircle2, MinusCircle, Loader2, Trash2 } from "lucide-react";
 import { useVolunteers, usePrograms, queryKeys } from "@/lib/api/hooks";
 import { volunteersApi } from "@/lib/api/volunteers";
+import { ApiError } from "@/lib/api/client";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import LoadError from "@/app/components/LoadError";
 import { Skeleton } from "../components/Skeleton";
+import ProgramPills from "../components/ProgramPills";
 import type { VolunteerDto, ProgramSummaryDto, CreateVolunteerDto } from "@/lib/types/api";
-import { programPillStyle, programTint } from "@/lib/programColor";
 
 type Tab = "active" | "former" | "all";
 
@@ -27,7 +29,7 @@ export default function VolunteersPage() {
   const programs: ProgramSummaryDto[] = programsQ.data ?? [];
 
   const [tab, setTab] = useState<Tab>("active");
-  const [programFilter, setProgramFilter] = useState<string>("all");
+  const [programFilter, setProgramFilter] = useState<string | null>(null); // program id; null = all
   const [query, setQuery] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<VolunteerDto | null>(null);
@@ -43,7 +45,7 @@ export default function VolunteersPage() {
     return data.filter((v) => {
       if (tab === "active" && !v.isActive) return false;
       if (tab === "former" && v.isActive) return false;
-      if (programFilter !== "all" && v.programSlug !== programFilter) return false;
+      if (programFilter !== null && v.programId !== programFilter) return false;
       if (q && !v.fullName.toLowerCase().includes(q) && !v.programName.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -78,15 +80,7 @@ export default function VolunteersPage() {
             </button>
           ))}
           <span className="sep" />
-          <button type="button" className={`ss-chip${programFilter === "all" ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setProgramFilter("all")}>
-            All programs
-          </button>
-          {programs.map((p) => (
-            <button key={p.id} type="button" className={`ss-chip${programFilter === p.slug ? ` is-active ${p.slug}` : ""}`} style={{ cursor: "pointer" }} onClick={() => setProgramFilter(programFilter === p.slug ? "all" : p.slug)}>
-              <span className={`ss-dot ${p.slug}`} />
-              {p.name}
-            </button>
-          ))}
+          <ProgramPills programs={programs} value={programFilter} onChange={setProgramFilter} allLabel="All programs" compact />
           <div className="search">
             <Search />
             <input type="text" placeholder="Search volunteers…" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -188,6 +182,7 @@ function VolunteerModal({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { isAdmin } = useAuth();
   const editing = volunteer !== null;
 
   const [nm, setNm] = useState(volunteer?.fullName ?? "");
@@ -199,7 +194,31 @@ function VolunteerModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canSubmit = nm.trim().length > 0 && programId !== "" && !saving;
+  // Two-click delete: the first click turns the button into a confirmation, so no second
+  // dialog is needed. Admin-only, matching the API. Soft delete — the record is hidden, not
+  // erased.
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const canSubmit = nm.trim().length > 0 && programId !== "" && !saving && !deleting;
+
+  async function handleDelete() {
+    if (!volunteer) return;
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    setDeleting(true);
+    setError(null);
+    try {
+      await volunteersApi.remove(volunteer.id);
+      queryClient.invalidateQueries({ queryKey: queryKeys.volunteers });
+      onClose();
+    } catch (err) {
+      setError(err instanceof ApiError && err.status === 403
+        ? "Only an admin can remove a volunteer."
+        : "Could not remove this volunteer — try again.");
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  }
 
   async function handleSubmit() {
     if (!canSubmit) return;
@@ -227,8 +246,8 @@ function VolunteerModal({
       }
       queryClient.invalidateQueries({ queryKey: queryKeys.volunteers });
       onClose();
-    } catch {
-      setError("Could not save volunteer — check that the backend is running and try again.");
+    } catch (err) {
+      setError(err instanceof ApiError && err.detail ? err.detail : "Could not save volunteer — check that the backend is running and try again.");
       setSaving(false);
     }
   }
@@ -236,7 +255,6 @@ function VolunteerModal({
   return (
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "var(--space-4)" }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(480px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
@@ -254,18 +272,7 @@ function VolunteerModal({
 
           <div>
             <div className="ss-label" style={{ marginBottom: 8 }}>Volunteering for <span style={{ color: "var(--danger)", fontWeight: 400 }}>*</span></div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {programs.map((p) => {
-                const selected = programId === p.id;
-                return (
-                  <button key={p.id} type="button" aria-pressed={selected} onClick={() => setProgramId(p.id)}
-                    style={programPillStyle(p.colorHex, selected)}>
-                    <span className="ss-dot" style={{ background: programTint(p.colorHex).accent }} />
-                    {p.name}
-                  </button>
-                );
-              })}
-            </div>
+            <ProgramPills programs={programs} value={programId || null} onChange={(id) => setProgramId(id ?? "")} />
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>
@@ -301,8 +308,23 @@ function VolunteerModal({
             {error}
           </div>
         )}
-        <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end", flexShrink: 0 }}>
-          <button className="ss-btn" type="button" onClick={onClose}>Cancel</button>
+        <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+          {editing && isAdmin && (
+            <button
+              className="ss-btn"
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting || saving}
+              style={confirmDelete
+                ? { background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" }
+                : { color: "var(--danger)" }}
+            >
+              {deleting ? <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 className="ss-btn-icon" />}
+              {deleting ? "Removing…" : confirmDelete ? "Confirm remove" : "Remove"}
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
+          <button className="ss-btn" type="button" onClick={onClose} disabled={deleting}>Cancel</button>
           <button className="ss-btn ss-btn-primary" type="button" onClick={handleSubmit} disabled={!canSubmit}>
             {saving ? <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} /> : <Check className="ss-btn-icon" />}
             {saving ? "Saving…" : editing ? "Save changes" : "Add volunteer"}

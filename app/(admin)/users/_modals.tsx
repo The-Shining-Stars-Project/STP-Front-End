@@ -136,7 +136,6 @@ export function CreateUserModal({
   return (
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "var(--space-4)" }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Create user" style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(460px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
@@ -285,7 +284,7 @@ export function EditUserModal({
   }
 
   return (
-    <div style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div style={overlayStyle}>
       <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Edit user" style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(440px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
           <div>
@@ -405,7 +404,7 @@ export function ResetPasswordModal({
   }
 
   return (
-    <div style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div style={overlayStyle}>
       <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Reset password" style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(420px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)" }}>
           <div>
@@ -491,7 +490,7 @@ export function ResetMfaModal({
   }
 
   return (
-    <div style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div style={overlayStyle}>
       <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Reset two-factor authentication" style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(440px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)" }}>
         <div style={{ padding: "var(--space-4)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
@@ -563,7 +562,7 @@ export function DeleteUserModal({
   }
 
   return (
-    <div style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div style={overlayStyle}>
       <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Delete user" style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(400px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)" }}>
         <div style={{ padding: "var(--space-4)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>

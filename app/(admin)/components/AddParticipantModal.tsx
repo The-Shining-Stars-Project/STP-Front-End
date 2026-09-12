@@ -4,17 +4,22 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { UserPlus, AlertCircle, X } from "lucide-react";
 import { participantsApi } from "@/lib/api/participants";
+import { ApiError } from "@/lib/api/client";
 import { queryKeys } from "@/lib/api/hooks";
+import { sizeOptions } from "@/lib/tshirtSizes";
 import type {
   ProgramSummaryDto,
   CreateParticipantDto,
   ParticipantStatus,
 } from "@/lib/types/api";
-import { programPillStyle, programTint } from "@/lib/programColor";
+import ProgramPills from "./ProgramPills";
+import { EmergencyContactsField, cleanContacts } from "./EmergencyContactsField";
 
 type AddParticipantForm = {
   nm: string;
   dob: string;
+  /** yyyy-MM-dd; blank means "today" (the server default). */
+  startDate: string;
   programId: string;
   status: "active" | "prospective" | "authpending" | "inquiry";
   sc: string;
@@ -37,16 +42,15 @@ type AddParticipantForm = {
   diploma: "" | "yes" | "no";
   secondaryProgramId: string;
   intakeNotes: string;
+  emergencyContacts: string[];
 };
 
 const EMPTY_FORM: AddParticipantForm = {
-  nm: "", dob: "", programId: "", status: "prospective", sc: "",
+  nm: "", dob: "", startDate: "", programId: "", status: "prospective", sc: "",
   guardianName: "", guardianPhone: "", guardianEmail: "", referralSource: "", tShirtSize: "", authExpiry: "",
   ippExpiry: "", allergies: "", anaphylactic: false, areasOfConcern: "", scEmail: "", scPhone: "", remind: "",
-  intakeDocs: false, diploma: "", secondaryProgramId: "", intakeNotes: "",
+  intakeDocs: false, diploma: "", secondaryProgramId: "", intakeNotes: "", emergencyContacts: [""],
 };
-
-const T_SHIRT_SIZES = ["YS", "YM", "YL", "S", "M", "L", "XL", "2XL"];
 
 function toInitials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -79,6 +83,7 @@ export default function AddParticipantModal({
       programId: form.programId,
       status: statusMap[form.status] ?? "Prospective",
       dateOfBirth: form.dob || undefined,
+      startDate: form.startDate || undefined,
       serviceCoordinator: form.sc.trim() || undefined,
       guardianName: form.guardianName.trim() || undefined,
       guardianPhone: form.guardianPhone.trim() || undefined,
@@ -97,6 +102,7 @@ export default function AddParticipantModal({
       hasHighSchoolDiploma: form.diploma === "" ? undefined : form.diploma === "yes",
       secondaryProgramId: form.secondaryProgramId || undefined,
       intakeNotes: form.intakeNotes.trim() || undefined,
+      emergencyContacts: cleanContacts(form.emergencyContacts),
     };
 
     setSaving(true);
@@ -107,8 +113,9 @@ export default function AddParticipantModal({
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: ["program-detail"] });
       onClose();
-    } catch {
-      setError("Could not save star — check that the backend is running and try again.");
+    } catch (err) {
+      // The server's own message when it has one (a validation limit, a scope refusal).
+      setError(err instanceof ApiError && err.detail ? err.detail : "Could not save star — check that the backend is running and try again.");
       setSaving(false);
     }
   }
@@ -123,13 +130,11 @@ export default function AddParticipantModal({
   return (
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "var(--space-4)" }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(560px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
           <div>
             <h3 style={{ fontSize: 15, fontWeight: 500, margin: "0 0 2px" }}>Add star</h3>
-            <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>Only name and program are required — everything else can be filled in later on the star&apos;s profile.</div>
           </div>
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4, borderRadius: "var(--r-sm)" }}>
             <X style={{ width: 16, height: 16 }} />
@@ -142,42 +147,35 @@ export default function AddParticipantModal({
             <input type="text" placeholder="e.g. Jordan Rivera" value={form.nm} onChange={(e) => setForm((f) => ({ ...f, nm: e.target.value }))} style={inputStyle} autoFocus />
           </div>
 
-          <div>
-            <div className="ss-label" style={{ marginBottom: 6 }}>Date of birth <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
-            <input type="date" value={form.dob} onChange={(e) => setForm((f) => ({ ...f, dob: e.target.value }))} style={{ ...inputStyle, width: "55%" }} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div className="ss-label" style={{ marginBottom: 6 }}>Date of birth <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
+              <input type="date" value={form.dob} onChange={(e) => setForm((f) => ({ ...f, dob: e.target.value }))} style={inputStyle} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div className="ss-label" style={{ marginBottom: 6 }}>Start date <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Defaults to today</span></div>
+              <input type="date" value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} style={inputStyle} />
+            </div>
           </div>
 
           <div>
             <div className="ss-label" style={{ marginBottom: 8 }}>Program <span style={{ color: "var(--danger)", fontWeight: 400 }}>*</span></div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {programs.map((p) => {
-                const selected = form.programId === p.id;
-                return (
-                  <button key={p.id} type="button" aria-pressed={selected} onClick={() => setForm((f) => ({ ...f, programId: p.id, secondaryProgramId: f.secondaryProgramId === p.id ? "" : f.secondaryProgramId }))}
-                    style={programPillStyle(p.colorHex, selected)}>
-                    <span className="ss-dot" style={{ background: programTint(p.colorHex).accent }} />
-                    {p.name}
-                  </button>
-                );
-              })}
-            </div>
+            <ProgramPills
+              programs={programs}
+              value={form.programId || null}
+              onChange={(id) => setForm((f) => ({ ...f, programId: id ?? "", secondaryProgramId: f.secondaryProgramId === id ? "" : f.secondaryProgramId }))}
+            />
           </div>
 
           <div>
             <div className="ss-label" style={{ marginBottom: 8 }}>Also enrolled in <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional — dual enrollment</span></div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <button type="button" className={`ss-chip${form.secondaryProgramId === "" ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, secondaryProgramId: "" }))}>None</button>
-              {programs.filter((p) => p.id !== form.programId).map((p) => {
-                const sel = form.secondaryProgramId === p.id;
-                return (
-                  <button key={p.id} type="button" aria-pressed={sel} onClick={() => setForm((f) => ({ ...f, secondaryProgramId: sel ? "" : p.id }))}
-                    style={programPillStyle(p.colorHex, sel)}>
-                    <span className="ss-dot" style={{ background: programTint(p.colorHex).accent }} />
-                    {p.name}
-                  </button>
-                );
-              })}
-            </div>
+            <ProgramPills
+              programs={programs}
+              value={form.secondaryProgramId || null}
+              onChange={(id) => setForm((f) => ({ ...f, secondaryProgramId: id ?? "" }))}
+              allLabel="None"
+              exclude={form.programId ? [form.programId] : []}
+            />
           </div>
 
           <div>
@@ -224,6 +222,11 @@ export default function AddParticipantModal({
           </div>
 
           <div>
+            <div className="ss-label" style={{ marginBottom: 6 }}>Emergency contacts <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional — up to 5, name and phone together</span></div>
+            <EmergencyContactsField value={form.emergencyContacts} onChange={(next) => setForm((f) => ({ ...f, emergencyContacts: next }))} inputStyle={inputStyle} />
+          </div>
+
+          <div>
             <div className="ss-label" style={{ marginBottom: 6 }}>Referral source <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
             <input type="text" placeholder="e.g. VMRC, word of mouth" value={form.referralSource} onChange={(e) => setForm((f) => ({ ...f, referralSource: e.target.value }))} style={inputStyle} />
           </div>
@@ -233,7 +236,7 @@ export default function AddParticipantModal({
               <div className="ss-label" style={{ marginBottom: 6 }}>T-shirt size</div>
               <select value={form.tShirtSize} onChange={(e) => setForm((f) => ({ ...f, tShirtSize: e.target.value }))} style={inputStyle}>
                 <option value="">Not set</option>
-                {T_SHIRT_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+                {sizeOptions(form.tShirtSize).map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div style={{ flex: 1 }}>
@@ -286,7 +289,7 @@ export default function AddParticipantModal({
 
           <div>
             <div className="ss-label" style={{ marginBottom: 6 }}>Intake notes <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
-            <textarea rows={3} placeholder="Anything worth remembering from intake…" value={form.intakeNotes} onChange={(e) => setForm((f) => ({ ...f, intakeNotes: e.target.value }))} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+            <textarea rows={5} placeholder="Anything worth remembering from intake…" value={form.intakeNotes} onChange={(e) => setForm((f) => ({ ...f, intakeNotes: e.target.value }))} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
           </div>
         </div>
 

@@ -307,6 +307,8 @@ export interface ParticipantSummaryDto {
   contactInRemind: string | null;
   intakeDocsSubmitted: boolean;
   hasHighSchoolDiploma: boolean | null;
+  /** Up to five free-text emergency contacts ("name – phone"), in the order entered. */
+  emergencyContacts: string[];
   secondaryProgramId: Guid | null;
   secondaryProgramName: string | null;
   secondaryProgramSlug: string | null;
@@ -445,7 +447,10 @@ export interface CohortRollUpDto {
   monthKey: string;
   programId: Guid | null;
   programName: string | null;
+  /** Distinct stars with at least one real level this month, derived from weekly scores. */
   participantCount: number;
+  /** How many (star, skill) levels a teacher has confirmed; the rest come straight from scores. */
+  confirmedCount: number;
   rows: CohortRollUpRowDto[];
 }
 
@@ -585,6 +590,8 @@ export interface CreateParticipantDto {
   contactInRemind?: string;
   intakeDocsSubmitted?: boolean;
   hasHighSchoolDiploma?: boolean;
+  /** Up to five free-text emergency contacts. */
+  emergencyContacts?: string[];
   secondaryProgramId?: Guid;
 }
 
@@ -595,6 +602,10 @@ export interface UpdateParticipantDto {
   status?: ParticipantStatus;
   birthYear?: number;
   serviceCoordinator?: string;
+  /** yyyy-MM-dd. Omit to leave unchanged. */
+  startDate?: string;
+  /** Replaces the list when present (empty clears); omit to leave unchanged. */
+  emergencyContacts?: string[];
   guardianName?: string;
   guardianPhone?: string;
   guardianEmail?: string;

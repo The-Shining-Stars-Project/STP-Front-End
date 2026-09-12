@@ -184,9 +184,6 @@ export function AddScriptModal({
         zIndex: 200,
         padding: "var(--space-4)",
       }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
     >
       <div
         ref={panelRef}

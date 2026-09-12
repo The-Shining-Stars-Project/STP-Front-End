@@ -152,7 +152,6 @@ function ProgramFormModal({
         display: "flex", alignItems: "center", justifyContent: "center",
         zIndex: 200, padding: "var(--space-4)",
       }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div style={{
         background: "var(--surface)", borderRadius: "var(--r-lg)",

@@ -89,7 +89,6 @@ export function NoteModal({
 
   return (
         <div
-          onClick={(e) => { if (e.target === e.currentTarget && !saving) onClose(); }}
           style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "var(--space-4)" }}
         >
           <div role="dialog" aria-modal="true" ref={panelRef} aria-label={`Notes for ${entry.fullName}`} style={{ background: "var(--surface)", borderRadius: 12, padding: 24, width: "min(460px, calc(100vw - 32px))", display: "flex", flexDirection: "column", gap: 16, border: "0.5px solid var(--border-hover)", maxHeight: "90vh", overflowY: "auto" }}>

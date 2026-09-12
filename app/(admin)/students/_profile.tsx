@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { parseLocalDate } from "@/lib/format";
 import { nextPathwaysReportDue } from "@/lib/pathwaysReports";
 import {
@@ -24,7 +25,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { participantsApi } from "@/lib/api/participants";
-import { usePrograms } from "@/lib/api/hooks";
+import { ApiError } from "@/lib/api/client";
+import { usePrograms, queryKeys } from "@/lib/api/hooks";
+import { useAuth } from "@/lib/auth/AuthProvider";
+import { sizeOptions } from "@/lib/tshirtSizes";
+import ProgramPills from "../components/ProgramPills";
+import { EmergencyContactsField, EmergencyContactsView, cleanContacts, draftFromContacts } from "../components/EmergencyContactsField";
 import ArtsProfileWidget from "./_arts_profile";
 import TrackerWidget from "./_tracker";
 import DocumentsWidget from "./_documents";
@@ -48,8 +54,6 @@ const STATUS_BADGE: Record<ParticipantStatus, { cls: string; icon: LucideIcon; l
   Inquiry:     { cls: "is-inquiry",     icon: Clock,        label: "Inquiry" },
   NotInterested: { cls: "is-notinterested", icon: MinusCircle, label: "Not interested" },
 };
-
-const T_SHIRT_SIZES = ["YS", "YM", "YL", "S", "M", "L", "XL", "2XL"];
 
 /** Days until the yyyy-MM-dd date; negative = already past. Null when unset. */
 function daysUntil(iso: string | null): number | null {
@@ -83,12 +87,15 @@ type Form = {
   ippExpiry: string; dob: string; allergies: string; anaphylactic: boolean;
   areasOfConcern: string; scEmail: string; scPhone: string; remind: string;
   intakeDocs: boolean; diploma: "" | "yes" | "no"; secondaryProgramId: string;
+  startDate: string; emergencyContacts: string[];
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ParticipantProfile({ id }: { id: string }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const { isAdmin } = useAuth();
 
   const [detail, setDetail] = useState<ParticipantDetailDto | null>(null);
   // Cached + shared via React Query (#34).
@@ -102,6 +109,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
     guardianName: "", guardianPhone: "", guardianEmail: "", referralSource: "", tShirtSize: "", authExpiry: "", intakeNotes: "",
     ippExpiry: "", dob: "", allergies: "", anaphylactic: false,
     areasOfConcern: "", scEmail: "", scPhone: "", remind: "", intakeDocs: false, diploma: "", secondaryProgramId: "",
+    startDate: "", emergencyContacts: [""],
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,6 +155,8 @@ export default function ParticipantProfile({ id }: { id: string }) {
       intakeDocs: d.intakeDocsSubmitted,
       diploma: d.hasHighSchoolDiploma === null ? "" : d.hasHighSchoolDiploma ? "yes" : "no",
       secondaryProgramId: d.secondaryProgramId ?? "",
+      startDate: d.startDate,
+      emergencyContacts: draftFromContacts(d.emergencyContacts),
     };
   }
 
@@ -187,14 +197,21 @@ export default function ParticipantProfile({ id }: { id: string }) {
       hasHighSchoolDiploma: form.diploma === "" ? undefined : form.diploma === "yes",
       secondaryProgramId: form.secondaryProgramId || undefined,
       clearSecondaryProgram: !form.secondaryProgramId,
+      startDate: form.startDate || undefined,
+      // Always sent: the list replaces what is stored, and an empty list clears it.
+      emergencyContacts: cleanContacts(form.emergencyContacts),
     };
     try {
       const updated = await participantsApi.update(id, dto);
       setDetail(updated);
       setForm(formFrom(updated));
       setEditing(false);
-    } catch {
-      setError("Could not save changes — make sure the backend is running and try again.");
+      // The list page and dashboard hold copies of this row (#34).
+      queryClient.invalidateQueries({ queryKey: queryKeys.participants });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+    } catch (err) {
+      // Prefer the server's reason (a validation limit reads better than "could not save").
+      setError(err instanceof ApiError && err.detail ? err.detail : "Could not save changes — make sure the backend is running and try again.");
     } finally {
       setSaving(false);
     }
@@ -204,11 +221,20 @@ export default function ParticipantProfile({ id }: { id: string }) {
     setDeleting(true);
     try {
       await participantsApi.remove(id);
+      // Drop the cached lists before navigating, or the Stars page shows the star for
+      // another minute and the report reads "delete didn't work".
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.participants }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+        queryClient.invalidateQueries({ queryKey: ["program-detail"] }),
+      ]);
       router.push("/students");
-    } catch {
+    } catch (err) {
       setDeleting(false);
       setDeleteOpen(false);
-      setError("Could not delete this star — try again.");
+      setError(err instanceof ApiError && err.status === 403
+        ? "Only an admin can remove a star."
+        : "Could not remove this star — try again.");
     }
   }
 
@@ -283,9 +309,11 @@ export default function ParticipantProfile({ id }: { id: string }) {
               </>
             ) : (
               <>
-                <button className="ss-btn" type="button" onClick={() => setDeleteOpen(true)} style={{ color: "var(--danger)" }}>
-                  <Trash2 className="ss-btn-icon" />Delete
-                </button>
+                {isAdmin && (
+                  <button className="ss-btn" type="button" onClick={() => setDeleteOpen(true)} style={{ color: "var(--danger)" }}>
+                    <Trash2 className="ss-btn-icon" />Delete
+                  </button>
+                )}
                 <button className="ss-btn ss-btn-primary" type="button" onClick={startEdit}>
                   <Pencil className="ss-btn-icon" />Edit profile
                 </button>
@@ -347,20 +375,11 @@ export default function ParticipantProfile({ id }: { id: string }) {
               {field(
                 "Program",
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span className={`ss-dot ${slug}`} />{detail.programName}</span>,
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {programs.map((p) => {
-                    const sel = form.programId === p.id;
-                    return (
-                      <button key={p.id} type="button" onClick={() => setForm((f) => ({ ...f, programId: p.id }))}
-                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "var(--r-pill)", cursor: "pointer", fontSize: 13,
-                          border: `0.5px solid ${sel ? `var(--${p.slug}-border)` : "var(--border)"}`,
-                          background: sel ? `var(--${p.slug}-fill)` : "var(--surface)",
-                          color: sel ? `var(--${p.slug})` : "var(--fg-secondary)" }}>
-                        <span className={`ss-dot ${p.slug}`} />{p.name}
-                      </button>
-                    );
-                  })}
-                </div>
+                <ProgramPills
+                  programs={programs}
+                  value={form.programId || null}
+                  onChange={(pid) => setForm((f) => ({ ...f, programId: pid ?? f.programId, secondaryProgramId: f.secondaryProgramId === pid ? "" : f.secondaryProgramId }))}
+                />
               )}
 
               {field(
@@ -374,21 +393,13 @@ export default function ParticipantProfile({ id }: { id: string }) {
                 detail.secondaryProgramName
                   ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span className={`ss-dot ${detail.secondaryProgramSlug}`} />{detail.secondaryProgramName}</span>
                   : "—",
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <button type="button" className={`ss-chip${form.secondaryProgramId === "" ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, secondaryProgramId: "" }))}>None</button>
-                  {programs.filter((p) => p.id !== form.programId).map((p) => {
-                    const sel = form.secondaryProgramId === p.id;
-                    return (
-                      <button key={p.id} type="button" onClick={() => setForm((f) => ({ ...f, secondaryProgramId: sel ? "" : p.id }))}
-                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "var(--r-pill)", cursor: "pointer", fontSize: 13,
-                          border: `0.5px solid ${sel ? `var(--${p.slug}-border)` : "var(--border)"}`,
-                          background: sel ? `var(--${p.slug}-fill)` : "var(--surface)",
-                          color: sel ? `var(--${p.slug})` : "var(--fg-secondary)" }}>
-                        <span className={`ss-dot ${p.slug}`} />{p.name}
-                      </button>
-                    );
-                  })}
-                </div>
+                <ProgramPills
+                  programs={programs}
+                  value={form.secondaryProgramId || null}
+                  onChange={(pid) => setForm((f) => ({ ...f, secondaryProgramId: pid ?? "" }))}
+                  allLabel="None"
+                  exclude={form.programId ? [form.programId] : []}
+                />
               )}
 
               {field(
@@ -397,13 +408,15 @@ export default function ParticipantProfile({ id }: { id: string }) {
                 <input type="text" value={form.sc} placeholder="e.g. R. Alvarez" onChange={(e) => setForm((f) => ({ ...f, sc: e.target.value }))} style={inputStyle} />
               )}
 
-              {/* read-only facts */}
-              <div>
-                <div className="ss-label" style={{ marginBottom: 6 }}>Start date</div>
-                <div style={{ fontSize: 14, color: "var(--fg)", display: "flex", alignItems: "center", gap: 6 }}>
+              {field(
+                "Start date",
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                   <CalendarDays style={{ width: 14, height: 14, color: "var(--fg-tertiary)" }} />{fmtDate(detail.startDate)}
-                </div>
-              </div>
+                </span>,
+                <input type="date" value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} style={inputStyle} />
+              )}
+
+              {/* read-only facts */}
 
               <div>
                 <div className="ss-label" style={{ marginBottom: 6 }}>Attendance</div>
@@ -453,6 +466,14 @@ export default function ParticipantProfile({ id }: { id: string }) {
                 <input type="email" value={form.guardianEmail} placeholder="name@email.com" onChange={(e) => setForm((f) => ({ ...f, guardianEmail: e.target.value }))} style={inputStyle} />
               )}
 
+              <div style={{ gridColumn: "1 / -1" }}>
+                {field(
+                  "Emergency contacts",
+                  <EmergencyContactsView contacts={detail.emergencyContacts} />,
+                  <EmergencyContactsField value={form.emergencyContacts} onChange={(next) => setForm((f) => ({ ...f, emergencyContacts: next }))} inputStyle={inputStyle} />
+                )}
+              </div>
+
               {field(
                 "Referral source",
                 detail.referralSource || "—",
@@ -464,7 +485,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
                 detail.tShirtSize || "—",
                 <select value={form.tShirtSize} onChange={(e) => setForm((f) => ({ ...f, tShirtSize: e.target.value }))} style={{ ...inputStyle, width: "60%" }}>
                   <option value="">Not set</option>
-                  {T_SHIRT_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+                  {sizeOptions(form.tShirtSize).map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               )}
 
@@ -535,11 +556,15 @@ export default function ParticipantProfile({ id }: { id: string }) {
                 </select>
               )}
 
-              <div style={{ gridColumn: "1 / -1" }}>
+              <div style={{ gridColumn: "1 / -1", minWidth: 0 }}>
                 {field(
                   "Intake notes",
-                  detail.intakeNotes || "—",
-                  <textarea value={form.intakeNotes} rows={3} placeholder="Anything worth remembering from intake…" onChange={(e) => setForm((f) => ({ ...f, intakeNotes: e.target.value }))} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+                  // pre-wrap keeps the paragraphs the intake worker typed; overflowWrap stops a
+                  // long unbroken string (a URL, a run of digits) pushing the card wider.
+                  detail.intakeNotes
+                    ? <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.5 }}>{detail.intakeNotes}</div>
+                    : "—",
+                  <textarea value={form.intakeNotes} rows={6} placeholder="Anything worth remembering from intake…" onChange={(e) => setForm((f) => ({ ...f, intakeNotes: e.target.value }))} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }} />
                 )}
               </div>
             </div>
@@ -558,15 +583,15 @@ export default function ParticipantProfile({ id }: { id: string }) {
             )]}
           />
 
-          {/* documents — intake paperwork with attached scans */}
-          <DocumentsWidget key={id} participantId={id} initial={detail.documents} />
+          {/* documents — intake paperwork with attached scans. Admin-only (client rule): the
+              API refuses the document endpoints to everyone else, so don't show the widget. */}
+          {isAdmin && <DocumentsWidget key={id} participantId={id} initial={detail.documents} />}
         </div>
       </div>
 
       {/* delete confirm */}
       {deleteOpen && (
         <div
-          onClick={(e) => { if (e.target === e.currentTarget && !deleting) setDeleteOpen(false); }}
           style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "var(--space-4)" }}
         >
           <div style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(400px, 100%)", border: "0.5px solid var(--border-hover)" }}>
@@ -575,17 +600,17 @@ export default function ParticipantProfile({ id }: { id: string }) {
                 <span style={{ display: "inline-flex", width: 32, height: 32, borderRadius: "50%", background: "var(--danger-fill, #fce8e8)", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <Trash2 style={{ width: 16, height: 16, color: "var(--danger)" }} />
                 </span>
-                <h3 style={{ fontSize: 15, fontWeight: 500, margin: 0 }}>Delete star?</h3>
+                <h3 style={{ fontSize: 15, fontWeight: 500, margin: 0 }}>Remove star?</h3>
               </div>
               <p style={{ fontSize: 13, color: "var(--fg-secondary)", lineHeight: 1.5, margin: 0 }}>
-                <strong>{detail.fullName}</strong> will be permanently removed, along with their attendance records. This can&apos;t be undone.
+                <strong>{detail.fullName}</strong> will be removed from every list, roster and report. Their attendance and progress history stays on record for auditing.
               </p>
             </div>
             <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button className="ss-btn" type="button" onClick={() => setDeleteOpen(false)} disabled={deleting}>Cancel</button>
               <button className="ss-btn" type="button" onClick={doDelete} disabled={deleting} style={{ background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" }}>
                 {deleting ? <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 className="ss-btn-icon" />}
-                {deleting ? "Deleting…" : "Delete"}
+                {deleting ? "Removing…" : "Remove"}
               </button>
             </div>
           </div>

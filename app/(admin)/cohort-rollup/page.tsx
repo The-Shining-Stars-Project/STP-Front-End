@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { BarChart3 } from "lucide-react";
 import { cohortApi } from "@/lib/api/cohort";
 import { useMyPrograms } from "@/lib/api/hooks";
+import ProgramPills from "../components/ProgramPills";
 import type { CohortRollUpDto, CohortRollUpRowDto, ProgramSummaryDto, CohortStarDto, ProgressLevel } from "@/lib/types/api";
 
 // Ordinal "mastery" ramp (light -> dark = more developed). Validated: CVD ΔE 17.2,
@@ -17,7 +18,7 @@ const LEVEL = {
 function DistributionBar({ row }: { row: CohortRollUpRowDto }) {
   const total = row.scoredCount;
   if (total === 0) {
-    return <div style={{ height: 10, borderRadius: 5, background: "var(--bg-tertiary)" }} title="No confirmed levels" />;
+    return <div style={{ height: 10, borderRadius: 5, background: "var(--bg-tertiary)" }} title="No levels yet" />;
   }
   const segs: { key: keyof typeof LEVEL; n: number }[] = [
     { key: "Novice", n: row.noviceCount },
@@ -89,28 +90,34 @@ export default function CohortRollUpPage() {
   // Cached + shared via React Query (#34).
   const programs: ProgramSummaryDto[] = useMyPrograms().data ?? [];
   const [data, setData] = useState<CohortRollUpDto | null>(null);
-  const [loading, setLoading] = useState(true);
+  // The data on hand is stamped with the (month, program) it answers; "loading" is simply
+  // that stamp being behind the filters, so no effect has to flip a flag.
+  const [loadedKey, setLoadedKey] = useState("");
   const [error, setError] = useState(false);
+  const scopeKey = `${month}|${programId ?? ""}`;
+  const loading = loadedKey !== scopeKey && !error;
 
   useEffect(() => {
-    setLoading(true);
+    let active = true;
     cohortApi.getRollUp(month, programId ?? undefined)
-      .then((d) => { setData(d); setError(false); })
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
-  }, [month, programId]);
+      .then((d) => { if (active) { setData(d); setError(false); setLoadedKey(scopeKey); } })
+      .catch(() => { if (active) setError(true); });
+    return () => { active = false; };
+  }, [month, programId, scopeKey]);
 
-  // Group rows by section (each section = one objective area of the 5 measured ones).
   // Which cell is expanded, and the Stars behind it. One at a time — this is a reference
-  // lookup ("who are those four?"), not a comparison view.
-  const [openCell, setOpenCell] = useState<{ subSkillId: string; level: ProgressLevel } | null>(null);
+  // lookup ("who are those four?"), not a comparison view. The open cell remembers the scope
+  // it was opened in, so changing the month or program collapses it — the list would
+  // otherwise describe a cohort that is no longer on screen.
+  const [openCellRaw, setOpenCell] = useState<{ scope: string; subSkillId: string; level: ProgressLevel } | null>(null);
+  const openCell = openCellRaw?.scope === scopeKey ? openCellRaw : null;
   const [cellStars, setCellStars] = useState<CohortStarDto[] | null>(null);
   const [cellLoading, setCellLoading] = useState(false);
 
   function toggleCell(subSkillId: string, level: ProgressLevel) {
     const same = openCell?.subSkillId === subSkillId && openCell?.level === level;
     if (same) { setOpenCell(null); setCellStars(null); return; }
-    setOpenCell({ subSkillId, level });
+    setOpenCell({ scope: scopeKey, subSkillId, level });
     setCellStars(null);
     setCellLoading(true);
     cohortApi.getStarsAtLevel(month, subSkillId, level, programId || undefined)
@@ -118,10 +125,6 @@ export default function CohortRollUpPage() {
       .catch(() => setCellStars([]))
       .finally(() => setCellLoading(false));
   }
-
-  // Collapse when the month or program changes — the open list would otherwise describe a
-  // cohort that is no longer on screen.
-  useEffect(() => { setOpenCell(null); setCellStars(null); }, [month, programId]);
 
   const sections = useMemo(() => {
     const map = new Map<number, { name: string; color: string; rows: CohortRollUpRowDto[] }>();
@@ -148,29 +151,21 @@ export default function CohortRollUpPage() {
       <div className="adm-content">
         <div className="info-note" style={{ marginBottom: "var(--space-2)" }}>
           <BarChart3 />
-          <span>Where the cohort lives this month — how many stars sit at each level per skill, from <strong>confirmed</strong> month-end levels only. Computed live; confirm levels in each star&apos;s Weekly tracker to populate it.</span>
+          <span>Where the cohort lives this month — how many stars sit at each level per skill, derived live from the <strong>weekly scores</strong> entered on the Weekly Data page. A month-end level confirmed in a star&apos;s tracker overrides the derived one.</span>
         </div>
 
         {/* program filter */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: "var(--space-3)" }}>
           <span className="ss-label" style={{ color: "var(--fg-tertiary)", marginRight: 2 }}>Program</span>
-          <button type="button" className={`ss-chip${programId === null ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setProgramId(null)}>All programs</button>
-          {programs.map((p) => (
-            <button key={p.id} type="button" onClick={() => setProgramId(p.id)}
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px", borderRadius: "var(--r-pill)", cursor: "pointer", fontSize: 13,
-                border: `0.5px solid ${programId === p.id ? `var(--${p.slug}-border)` : "var(--border)"}`,
-                background: programId === p.id ? `var(--${p.slug}-fill)` : "var(--surface)",
-                color: programId === p.id ? `var(--${p.slug})` : "var(--fg-secondary)" }}>
-              <span className={`ss-dot ${p.slug}`} />{p.name}
-            </button>
-          ))}
+          <ProgramPills programs={programs} value={programId} onChange={setProgramId} allLabel="All programs" compact />
         </div>
 
         {/* stat tiles */}
         <div className="board-stats">
           <div className="board-stat"><span className="num">{data?.participantCount ?? 0}</span><span className="label">Stars Scored</span></div>
           <div className="board-stat"><span className="num">{skillsWithData}</span><span className="label">Skills With Data</span></div>
-          <div className="board-stat"><span className="num">{totalConfirmed}</span><span className="label">Confirmed Levels</span></div>
+          <div className="board-stat"><span className="num">{totalConfirmed}</span><span className="label">Levels From Scores</span></div>
+          <div className="board-stat"><span className="num">{data?.confirmedCount ?? 0}</span><span className="label">Confirmed By Teachers</span></div>
         </div>
 
         {/* legend */}
@@ -188,7 +183,7 @@ export default function CohortRollUpPage() {
           <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>Loading…</div>
         ) : totalConfirmed === 0 ? (
           <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>
-            No confirmed levels for {data?.programName ?? "any program"} this month yet. Confirm month-end levels in a star&apos;s Weekly tracker to see the cohort here.
+            No weekly scores for {data?.programName ?? "any program"} this month yet. Enter scores on the Weekly Data page and the cohort appears here.
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>

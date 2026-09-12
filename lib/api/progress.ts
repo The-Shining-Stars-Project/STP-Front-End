@@ -18,6 +18,9 @@ import type {
 export const progressApi = {
   getStarMonth:   (participantId: string, month: string) =>
     api.get<StarMonthDto>(`/api/progress/star/${participantId}?month=${encodeURIComponent(month)}`),
+  /** Every weekly score for a program's stars in one month — the Weekly Data grid's bulk read. */
+  getProgramMonth: (programId: string, month: string) =>
+    api.get<WeeklyDataEntryDto[]>(`/api/progress/weekly?programId=${programId}&month=${encodeURIComponent(month)}`),
   recordWeekly:   (dto: RecordWeeklyScoreDto) =>
     api.post<WeeklyDataEntryDto>("/api/progress/weekly", dto),
   computeMonthEnd: (participantId: string, month: string) =>

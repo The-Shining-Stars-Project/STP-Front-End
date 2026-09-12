@@ -269,7 +269,6 @@ export default function GamesLibraryPage() {
       {selected && (
         <div
           style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.45)", display: "flex", justifyContent: "flex-end", zIndex: 200 }}
-          onClick={(e) => { if (e.target === e.currentTarget) setSelected(null); }}
         >
           <div style={{ background: "var(--surface)", width: "min(460px, 100%)", height: "100%", display: "flex", flexDirection: "column", borderLeft: "0.5px solid var(--border-hover)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)", gap: 8 }}>

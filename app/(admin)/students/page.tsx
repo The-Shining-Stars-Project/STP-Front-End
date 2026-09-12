@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { parseLocalDate } from "@/lib/format";
 import { useAuth } from "@/lib/auth/AuthProvider";
@@ -30,6 +30,7 @@ import { auditApi } from "@/lib/api/audit";
 import LoadError from "@/app/components/LoadError";
 import AddParticipantModal from "../components/AddParticipantModal";
 import ImportStarsModal from "../components/ImportStarsModal";
+import ProgramPills from "../components/ProgramPills";
 import type {
   ParticipantSummaryDto,
   ProgramSummaryDto,
@@ -64,6 +65,7 @@ type Student = {
   nm: string;
   birthYear: string;
   prog: string;
+  progId: string;
   progName: string;
   status: Status;
   alerts: AlertKind[];
@@ -81,7 +83,58 @@ type Student = {
   dob: string;
   allergies: string;
   secondaryProgName: string;
+  emergencyContacts: string;
 };
+
+// ── View state persistence ────────────────────────────────────────────────────
+// Opening a star and coming back used to land on page 1 with the filters reset, because
+// everything lived in component state. The view now survives in sessionStorage for the tab's
+// lifetime: back from a profile (or from anywhere) returns to the same page, filter, sort and
+// search. Session-scoped on purpose — a fresh tab starts clean.
+
+const VIEW_KEY = "stars-list-view";
+
+type ViewState = {
+  statusTab: StatusTab;
+  /** Program id, or null for all. */
+  programFilter: string | null;
+  alertsOnly: boolean;
+  query: string;
+  sortKey: SortKey;
+  sortDir: "asc" | "desc";
+  page: number;
+  rowsPerPage: number;
+};
+
+const DEFAULT_VIEW: ViewState = {
+  statusTab: "all", programFilter: null, alertsOnly: false, query: "",
+  sortKey: "name", sortDir: "asc", page: 1, rowsPerPage: 10,
+};
+
+const STATUS_TABS: readonly StatusTab[] = ["all", "active", "prospective", "attention", "former", "authpending", "inquiry", "notinterested"];
+const ROWS_PER_PAGE_OPTIONS = [10, 25, 50] as const;
+
+/** Reads the saved view, validating every field — a stale or hand-edited value falls back to the default. */
+function loadView(): ViewState {
+  if (typeof window === "undefined") return DEFAULT_VIEW;
+  try {
+    const raw = window.sessionStorage.getItem(VIEW_KEY);
+    if (!raw) return DEFAULT_VIEW;
+    const v = JSON.parse(raw) as Partial<ViewState>;
+    return {
+      statusTab: STATUS_TABS.includes(v.statusTab as StatusTab) ? (v.statusTab as StatusTab) : DEFAULT_VIEW.statusTab,
+      programFilter: typeof v.programFilter === "string" && v.programFilter ? v.programFilter : null,
+      alertsOnly: v.alertsOnly === true,
+      query: typeof v.query === "string" ? v.query : "",
+      sortKey: v.sortKey === "att" || v.sortKey === "start" ? v.sortKey : "name",
+      sortDir: v.sortDir === "desc" ? "desc" : "asc",
+      page: Number.isInteger(v.page) && (v.page as number) >= 1 ? (v.page as number) : 1,
+      rowsPerPage: (ROWS_PER_PAGE_OPTIONS as readonly number[]).includes(v.rowsPerPage as number) ? (v.rowsPerPage as number) : DEFAULT_VIEW.rowsPerPage,
+    };
+  } catch {
+    return DEFAULT_VIEW;
+  }
+}
 
 /** Days until the yyyy-MM-dd date; negative = already past. Null when unset. */
 function daysUntil(iso: string | null): number | null {
@@ -101,6 +154,7 @@ function dtoToStudent(dto: ParticipantSummaryDto): Student {
     nm: dto.fullName,
     birthYear: dto.birthYear ? `b. ${dto.birthYear}` : "—",
     prog: dto.programSlug,
+    progId: dto.programId,
     progName: dto.programName,
     status: dto.status.toLowerCase() as Status,
     alerts: buildAlerts(dto),
@@ -118,6 +172,7 @@ function dtoToStudent(dto: ParticipantSummaryDto): Student {
     dob: dto.dateOfBirth ?? "",
     allergies: dto.allergies ? `${dto.allergies}${dto.allergyAnaphylactic ? " *" : ""}` : "",
     secondaryProgName: dto.secondaryProgramName ?? "",
+    emergencyContacts: (dto.emergencyContacts ?? []).join("; "),
   };
 }
 
@@ -137,9 +192,9 @@ const STARS_CSV_FILENAME = "stars.csv";
 /** Builds and downloads the CSV. Returns the number of DATA rows, for the audit report. */
 function exportCsv(rows: Student[]): number {
   const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
-  const header = ["Name", "DOB", "Birth year", "Program", "Also enrolled in", "Status", "Alerts", "Attendance %", "Service coordinator", "Started", "Guardian", "Guardian phone", "Guardian email", "Referral source", "T-shirt size", "POS expiry", "IPP expiry", "Allergies (* = anaphylactic)"];
+  const header = ["Name", "DOB", "Birth year", "Program", "Also enrolled in", "Status", "Alerts", "Attendance %", "Service coordinator", "Started", "Guardian", "Guardian phone", "Guardian email", "Emergency contacts", "Referral source", "T-shirt size", "POS expiry", "IPP expiry", "Allergies (* = anaphylactic)"];
   const lines = rows.map((s) =>
-    [s.nm, s.dob, s.birthYear, s.progName, s.secondaryProgName, STATUS_BADGE[s.status]?.label ?? s.status, s.alerts.join("; ") || "none", s.att, s.sc, s.startRaw, s.guardianName, s.guardianPhone, s.guardianEmail, s.referralSource, s.tShirtSize, s.authExpiry, s.ippExpiry, s.allergies]
+    [s.nm, s.dob, s.birthYear, s.progName, s.secondaryProgName, STATUS_BADGE[s.status]?.label ?? s.status, s.alerts.join("; ") || "none", s.att, s.sc, s.startRaw, s.guardianName, s.guardianPhone, s.guardianEmail, s.emergencyContacts, s.referralSource, s.tShirtSize, s.authExpiry, s.ippExpiry, s.allergies]
       .map(esc)
       .join(",")
   );
@@ -167,18 +222,27 @@ export default function StudentsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [auditWarning, setAuditWarning] = useState<string | null>(null);
 
+  // Restored once, on mount. This page never renders on the server (AuthGuard waits for the
+  // session), so reading sessionStorage in the initializer cannot mismatch a server render.
+  const [initialView] = useState<ViewState>(loadView);
+
   // filters
-  const [statusTab, setStatusTab] = useState<StatusTab>("all");
-  const [programFilter, setProgramFilter] = useState<string>("all");
-  const [alertsOnly, setAlertsOnly] = useState(false);
-  const [query, setQuery] = useState("");
+  const [statusTab, setStatusTab] = useState<StatusTab>(initialView.statusTab);
+  const [programFilter, setProgramFilter] = useState<string | null>(initialView.programFilter);
+  const [alertsOnly, setAlertsOnly] = useState(initialView.alertsOnly);
+  const [query, setQuery] = useState(initialView.query);
 
   // sorting + paging + selection
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const [page, setPage] = useState(1);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [sortKey, setSortKey] = useState<SortKey>(initialView.sortKey);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">(initialView.sortDir);
+  const [page, setPage] = useState(initialView.page);
+  const [rowsPerPage, setRowsPerPage] = useState<number>(initialView.rowsPerPage);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const view: ViewState = { statusTab, programFilter, alertsOnly, query, sortKey, sortDir, page, rowsPerPage };
+    try { window.sessionStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch { /* private mode or quota — the view just won't persist */ }
+  }, [statusTab, programFilter, alertsOnly, query, sortKey, sortDir, page, rowsPerPage]);
 
   const counts = {
     all:         data.length,
@@ -206,7 +270,7 @@ export default function StudentsPage() {
     const q = query.trim().toLowerCase();
     const rows = data.filter((d) => {
       if (statusTab !== "all" && d.status !== statusTab) return false;
-      if (programFilter !== "all" && d.prog !== programFilter) return false;
+      if (programFilter !== null && d.progId !== programFilter) return false;
       if (alertsOnly && d.alerts.length === 0) return false;
       if (q && !d.nm.toLowerCase().includes(q) && !d.progName.toLowerCase().includes(q) && !d.sc.toLowerCase().includes(q)) return false;
       return true;
@@ -321,7 +385,7 @@ export default function StudentsPage() {
 
   const filterSummary = [
     statusTab === "all" ? "All statuses" : STATUS_BADGE[statusTab].label,
-    programFilter === "all" ? "all programs" : programs.find((p) => p.slug === programFilter)?.name ?? programFilter,
+    programFilter === null ? "all programs" : programs.find((p) => p.id === programFilter)?.name ?? "one program",
     ...(alertsOnly ? ["alerts only"] : []),
   ].join(" · ");
 
@@ -416,26 +480,7 @@ export default function StudentsPage() {
 
         {/* filter bar */}
         <div className="filter-bar">
-          <button
-            type="button"
-            className={`ss-chip${programFilter === "all" ? " is-active" : ""}`}
-            style={{ cursor: "pointer" }}
-            onClick={() => setProg("all")}
-          >
-            All
-          </button>
-          {programs.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className={`ss-chip${programFilter === p.slug ? ` is-active ${p.slug}` : ""}`}
-              style={{ cursor: "pointer" }}
-              onClick={() => setProg(programFilter === p.slug ? "all" : p.slug)}
-            >
-              <span className={`ss-dot ${p.slug}`} />
-              {p.name}
-            </button>
-          ))}
+          <ProgramPills programs={programs} value={programFilter} onChange={setProg} allLabel="All" compact />
           <span className="sep" />
           <button
             type="button"
@@ -616,9 +661,7 @@ export default function StudentsPage() {
                 value={rowsPerPage}
                 onChange={(e) => { setRowsPerPage(Number(e.target.value)); setPage(1); }}
               >
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
+                {ROWS_PER_PAGE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
             </div>
             <div className="pager">
