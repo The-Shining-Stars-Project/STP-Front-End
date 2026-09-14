@@ -23,40 +23,40 @@ import { programPillStyle, programTint } from "@/lib/programColor";
 
 // ── Checklist Template ────────────────────────────────────────────────────────
 
-export type TemplateItem = { id: string; label: string };
+export type TemplateItem = { id: string; label: string; renewalMonths: number | null };
 export type TemplateSection = { name: string; items: TemplateItem[] };
 
 export const DEFAULT_TEMPLATE: TemplateSection[] = [
   {
     name: "HR & Compliance",
     items: [
-      { id: "t1", label: "W-4 / I-9 completed" },
-      { id: "t2", label: "Background check cleared" },
-      { id: "t3", label: "Emergency contact form submitted" },
+      { id: "t1", label: "W-4 / I-9 completed", renewalMonths: null },
+      { id: "t2", label: "Background check cleared", renewalMonths: null },
+      { id: "t3", label: "Emergency contact form submitted", renewalMonths: null },
     ],
   },
   {
     name: "Training",
     items: [
-      { id: "t4", label: "Program overview training" },
-      { id: "t5", label: "Child safety & mandated reporter training" },
-      { id: "t6", label: "First aid / CPR certification" },
+      { id: "t4", label: "Program overview training", renewalMonths: null },
+      { id: "t5", label: "Child safety & mandated reporter training", renewalMonths: null },
+      { id: "t6", label: "First aid / CPR certification", renewalMonths: 24 },
     ],
   },
   {
     name: "Program Requirements",
     items: [
-      { id: "t7", label: "Liability waiver signed" },
-      { id: "t8", label: "Code of conduct acknowledged" },
-      { id: "t9", label: "Media release policy reviewed" },
+      { id: "t7", label: "Liability waiver signed", renewalMonths: null },
+      { id: "t8", label: "Code of conduct acknowledged", renewalMonths: null },
+      { id: "t9", label: "Media release policy reviewed", renewalMonths: null },
     ],
   },
   {
     name: "Access & Setup",
     items: [
-      { id: "t10", label: "Staff email account created" },
-      { id: "t11", label: "Program schedule provided" },
-      { id: "t12", label: "Star roster access granted" },
+      { id: "t10", label: "Staff email account created", renewalMonths: null },
+      { id: "t11", label: "Program schedule provided", renewalMonths: null },
+      { id: "t12", label: "Star roster access granted", renewalMonths: null },
     ],
   },
 ];
@@ -93,6 +93,11 @@ export function EditChecklistModal({
       i !== si ? s : { ...s, items: s.items.map((it, j) => j === ii ? { ...it, label } : it) }
     ));
   }
+  function updateItemRenewal(si: number, ii: number, renewalMonths: number | null) {
+    setDraft((d) => d.map((s, i) =>
+      i !== si ? s : { ...s, items: s.items.map((it, j) => j === ii ? { ...it, renewalMonths } : it) }
+    ));
+  }
   function deleteItem(si: number, ii: number) {
     setDraft((d) => d.map((s, i) =>
       i !== si ? s : { ...s, items: s.items.filter((_, j) => j !== ii) }
@@ -100,7 +105,7 @@ export function EditChecklistModal({
   }
   function addItem(si: number) {
     setDraft((d) => d.map((s, i) =>
-      i !== si ? s : { ...s, items: [...s.items, { id: uid(), label: "" }] }
+      i !== si ? s : { ...s, items: [...s.items, { id: uid(), label: "", renewalMonths: null }] }
     ));
   }
 
@@ -198,6 +203,18 @@ export function EditChecklistModal({
                     placeholder="Checklist item"
                     style={itemInputStyle}
                   />
+                  {/* Renewal interval: completing the item stamps its expiry this far out
+                      (TB 4 years, CPR and harassment training 2). */}
+                  <select
+                    value={item.renewalMonths ?? ""}
+                    onChange={(e) => updateItemRenewal(si, ii, e.target.value ? Number(e.target.value) : null)}
+                    title="Renews every…"
+                    aria-label={`Renewal interval for ${item.label || "item"}`}
+                    style={{ fontSize: 11, padding: "2px 4px", border: "0.5px solid var(--border)", borderRadius: "var(--r-sm)", background: "var(--surface)", color: item.renewalMonths ? "var(--fg)" : "var(--fg-tertiary)" }}
+                  >
+                    <option value="">One-time</option>
+                    {[1, 2, 3, 4, 5].map((y) => <option key={y} value={y * 12}>Renews every {y} yr{y > 1 ? "s" : ""}</option>)}
+                  </select>
                   <button
                     type="button"
                     onClick={() => deleteItem(si, ii)}

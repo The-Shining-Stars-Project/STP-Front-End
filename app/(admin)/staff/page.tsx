@@ -98,7 +98,7 @@ function templateToSections(items: ChecklistTemplateItemDto[]): TemplateSection[
   items.forEach((item, i) => {
     let sec = sections.find((s) => s.name === item.section);
     if (!sec) { sec = { name: item.section, items: [] }; sections.push(sec); }
-    sec.items.push({ id: `t${i}`, label: item.label });
+    sec.items.push({ id: `t${i}`, label: item.label, renewalMonths: item.renewalMonths ?? null });
   });
   return sections;
 }
@@ -107,7 +107,7 @@ function sectionsToTemplate(sections: TemplateSection[]): ChecklistTemplateItemD
   return sections.flatMap((s) =>
     s.items
       .filter((i) => i.label.trim().length > 0)
-      .map((i) => ({ section: s.name.trim() || "General", label: i.label.trim() }))
+      .map((i) => ({ section: s.name.trim() || "General", label: i.label.trim(), renewalMonths: i.renewalMonths }))
   );
 }
 
@@ -332,6 +332,36 @@ function StaffPageInner() {
   }
 
   // Due/renewal dates for expiring items (CPR, TB, Mandated Reporter) — saved on change.
+  // Renewable items: the completion date drives the expiry (server stamps it).
+  async function handleItemCompletedDate(staffId: string, item: OnboardingItemDto, iso: string) {
+    if (togglingIds.has(item.id) || !iso) return;
+    setTogglingIds((prev) => new Set(prev).add(item.id));
+    setSaveError(null);
+    try {
+      const updated = await staffApi.setOnboardingItem(staffId, item.id, { isCompleted: true, completedDate: iso });
+      setDetailCache((prev) => ({ ...prev, [staffId]: updated }));
+      queryClient.invalidateQueries({ queryKey: queryKeys.staff, exact: true });
+    } catch (e) {
+      setSaveError(e instanceof ApiError && e.detail ? e.detail : "Couldn't update the completion date — try again.");
+    } finally {
+      setTogglingIds((prev) => { const next = new Set(prev); next.delete(item.id); return next; });
+    }
+  }
+  // "Not applicable" for this person — drops the item out of their progress and alerts.
+  async function handleItemNotApplicable(staffId: string, item: OnboardingItemDto) {
+    if (togglingIds.has(item.id)) return;
+    setTogglingIds((prev) => new Set(prev).add(item.id));
+    setSaveError(null);
+    try {
+      const updated = await staffApi.setOnboardingItem(staffId, item.id, { isCompleted: item.isCompleted, isNotApplicable: !item.isNotApplicable });
+      setDetailCache((prev) => ({ ...prev, [staffId]: updated }));
+      queryClient.invalidateQueries({ queryKey: queryKeys.staff, exact: true });
+    } catch (e) {
+      setSaveError(e instanceof ApiError && e.detail ? e.detail : "Couldn't update the item — try again.");
+    } finally {
+      setTogglingIds((prev) => { const next = new Set(prev); next.delete(item.id); return next; });
+    }
+  }
   async function handleItemExpiry(staffId: string, item: OnboardingItemDto, iso: string) {
     if (togglingIds.has(item.id)) return;
     setTogglingIds((prev) => new Set(prev).add(item.id));
@@ -569,36 +599,74 @@ function StaffPageInner() {
                           <div className="check-sec" key={section}>
                             <div className="check-sec-label">{section}</div>
                             {items.map((item) => (
-                              <div className={`ss-checkrow${item.isCompleted ? " is-done" : ""}`} key={item.id}>
+                              <div className={`ss-checkrow${item.isCompleted ? " is-done" : ""}`} key={item.id} style={item.isNotApplicable ? { opacity: 0.55 } : undefined}>
                                 <button
                                   type="button"
                                   className={`ss-checkbox${item.isCompleted ? " is-checked" : ""}`}
                                   style={{ padding: 0, opacity: togglingIds.has(item.id) ? 0.5 : 1 }}
                                   aria-pressed={item.isCompleted}
                                   aria-label={`${item.isCompleted ? "Mark incomplete" : "Mark complete"}: ${item.label}`}
-                                  disabled={togglingIds.has(item.id)}
+                                  disabled={togglingIds.has(item.id) || item.isNotApplicable}
                                   onClick={() => handleItemToggle(s.id, item)}
                                 >
                                   {item.isCompleted && <Check />}
                                 </button>
-                                <span className="ss-checkrow-label">{item.label}</span>
+                                <span className="ss-checkrow-label" style={item.isNotApplicable ? { textDecoration: "line-through" } : undefined}>{item.label}</span>
+                                {item.renewalMonths && !item.isNotApplicable && (
+                                  <span style={{ fontSize: 11, color: "var(--fg-tertiary)" }}>renews every {item.renewalMonths / 12} yr{item.renewalMonths > 12 ? "s" : ""}</span>
+                                )}
                                 <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                                  {item.expiryDate && (
-                                    <span className={parseLocalDate(item.expiryDate) < new Date() ? "ss-date-expired" : "ss-date-expiring"}>
-                                      <AlertCircle />Due {formatShort(item.expiryDate)}
-                                    </span>
+                                  {item.isNotApplicable ? (
+                                    <span className="ss-checkrow-date">Not applicable</span>
+                                  ) : (
+                                    <>
+                                      {item.expiryDate && (
+                                        <span className={parseLocalDate(item.expiryDate) < new Date() ? "ss-date-expired" : "ss-date-expiring"}>
+                                          <AlertCircle />{item.renewalMonths ? "Renew by" : "Due"} {formatShort(item.expiryDate)}
+                                        </span>
+                                      )}
+                                      {item.renewalMonths ? (
+                                        item.isCompleted && (
+                                          <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--fg-tertiary)" }}>
+                                            Completed
+                                            <input
+                                              type="date"
+                                              title="Completed on — the renewal date follows from this"
+                                              value={item.completedDate ?? ""}
+                                              disabled={togglingIds.has(item.id)}
+                                              onChange={(e) => handleItemCompletedDate(s.id, item, e.target.value)}
+                                              style={{ fontSize: 11, padding: "2px 4px", border: "0.5px solid var(--border)", borderRadius: "var(--r-sm)", background: "var(--surface)", color: "var(--fg-tertiary)", width: 118 }}
+                                            />
+                                          </label>
+                                        )
+                                      ) : (
+                                        <>
+                                          {!item.expiryDate && item.completedDate && (
+                                            <span className="ss-checkrow-date">{formatShort(item.completedDate)}</span>
+                                          )}
+                                          <input
+                                            type="date"
+                                            title="Due / renewal date"
+                                            value={item.expiryDate ?? ""}
+                                            disabled={togglingIds.has(item.id)}
+                                            onChange={(e) => handleItemExpiry(s.id, item, e.target.value)}
+                                            style={{ fontSize: 11, padding: "2px 4px", border: "0.5px solid var(--border)", borderRadius: "var(--r-sm)", background: "var(--surface)", color: "var(--fg-tertiary)", width: 118 }}
+                                          />
+                                        </>
+                                      )}
+                                    </>
                                   )}
-                                  {!item.expiryDate && item.completedDate && (
-                                    <span className="ss-checkrow-date">{formatShort(item.completedDate)}</span>
-                                  )}
-                                  <input
-                                    type="date"
-                                    title="Due / renewal date"
-                                    value={item.expiryDate ?? ""}
+                                  <button
+                                    type="button"
+                                    className={`ss-chip${item.isNotApplicable ? " is-active" : ""}`}
+                                    title={item.isNotApplicable ? "Mark as required for this person" : "Not required for this person — leaves it out of their progress and alerts"}
+                                    aria-pressed={item.isNotApplicable}
                                     disabled={togglingIds.has(item.id)}
-                                    onChange={(e) => handleItemExpiry(s.id, item, e.target.value)}
-                                    style={{ fontSize: 11, padding: "2px 4px", border: "0.5px solid var(--border)", borderRadius: "var(--r-sm)", background: "var(--surface)", color: "var(--fg-tertiary)", width: 118 }}
-                                  />
+                                    onClick={() => handleItemNotApplicable(s.id, item)}
+                                    style={{ cursor: "pointer", fontSize: 11, padding: "2px 8px" }}
+                                  >
+                                    N/A
+                                  </button>
                                   {item.hasFile && (
                                     <span
                                       title={`${item.fileName}${item.sizeBytes != null ? ` (${formatBytes(item.sizeBytes)})` : ""}`}

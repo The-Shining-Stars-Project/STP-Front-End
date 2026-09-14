@@ -137,6 +137,24 @@ export default function DashboardPage() {
       }
     }
 
+    // Staff training / paperwork renewals (TB, CPR, harassment training) within 60 days or
+    // already lapsed. The API only fills these for admins.
+    for (const st of staff) {
+      if (items.length >= 6) break;
+      for (const a of st.trainingAlerts ?? []) {
+        if (items.length >= 6) break;
+        items.push({
+          severity: a.daysUntil < 0 ? "danger" : "warning",
+          txt: a.daysUntil < 0
+            ? `${st.fullName} — ${a.label} expired`
+            : `${st.fullName} — ${a.label} renews in ${a.daysUntil} day${a.daysUntil === 1 ? "" : "s"}`,
+          sub: `Staff onboarding · ${a.daysUntil < 0 ? "lapsed" : "due"} ${a.expiryDate}`,
+          act: "Review",
+          href: "/staff",
+        });
+      }
+    }
+
     // Pathways 6/12-month reports coming due within a month.
     for (const p of participants) {
       if (items.length >= 6) break;
@@ -186,7 +204,7 @@ export default function DashboardPage() {
       });
     }
     return items;
-  }, [docAlertParticipants, participants]);
+  }, [docAlertParticipants, participants, staff]);
 
   // ── Upcoming events ────────────────────────────────────────────────────────────
   const upcoming = useMemo(() => {

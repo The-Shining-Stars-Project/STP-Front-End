@@ -1,12 +1,15 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { Plus, ChevronLeft, ChevronRight, MapPin, Clock, X } from "lucide-react";
+import { Plus, ChevronLeft, ChevronRight, MapPin, Clock, X, Pencil, Trash2, Check, Loader2, Info } from "lucide-react";
 import { parseLocalDate } from "@/lib/format";
+import { linkify } from "@/lib/linkify";
 import { calendarApi } from "@/lib/api/calendar";
-import { usePrograms } from "@/lib/api/hooks";
-import type { CalendarEventDto, ProgramSummaryDto, CreateCalendarEventDto } from "@/lib/types/api";
-import { programPillStyle, programTint } from "@/lib/programColor";
+import { ApiError } from "@/lib/api/client";
+import { usePrograms, useReferenceLists } from "@/lib/api/hooks";
+import { useAuth } from "@/lib/auth/AuthProvider";
+import type { CalendarEventDto, ProgramSummaryDto, CreateCalendarEventDto, SiteDto } from "@/lib/types/api";
+import ProgramPills from "../components/ProgramPills";
 
 // ── Calendar math ─────────────────────────────────────────────────────────────
 
@@ -34,24 +37,66 @@ function buildCells(year: number, month: number): Cell[] {
 
 // ── Add Event Modal ───────────────────────────────────────────────────────────
 
-type AddForm = { title: string; date: string; programId: string; location: string; timeRange: string };
-const EMPTY_ADD: AddForm = { title: "", date: "", programId: "", location: "", timeRange: "" };
+type EventForm = { title: string; date: string; programId: string; location: string; timeRange: string; details: string; siteIds: string[] };
+const EMPTY_FORM: EventForm = { title: "", date: "", programId: "", location: "", timeRange: "", details: "", siteIds: [] };
 
-function AddEventModal({
+function formFrom(e: CalendarEventDto): EventForm {
+  return {
+    title: e.title, date: e.date, programId: e.programId ?? "",
+    location: e.location ?? "", timeRange: e.timeRange ?? "", details: e.meta ?? "", siteIds: [...e.siteIds],
+  };
+}
+
+/**
+ * One modal for both adding and editing an event. Edit mode carries a Remove button (two
+ * clicks: the first turns it into a confirmation). Sites are chips from the Sites list —
+ * an event can be for several locations — and Details takes free text where any link
+ * (a Zoom URL, a Google Doc) becomes clickable on the calendar.
+ */
+function EventModal({
   programs,
+  sites,
   defaultDate,
+  existing,
   onClose,
-  onCreated,
+  onSaved,
+  onDeleted,
 }: {
   programs: ProgramSummaryDto[];
+  sites: SiteDto[];
   defaultDate: string;
+  /** The event being edited; null for a new one. */
+  existing: CalendarEventDto | null;
   onClose: () => void;
-  onCreated: (e: CalendarEventDto) => void;
+  onSaved: (e: CalendarEventDto) => void;
+  onDeleted: (id: string) => void;
 }) {
-  const [form, setForm] = useState<AddForm>({ ...EMPTY_ADD, date: defaultDate });
+  const editing = existing !== null;
+  const [form, setForm] = useState<EventForm>(existing ? formFrom(existing) : { ...EMPTY_FORM, date: defaultDate });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const canSubmit = form.title.trim().length > 0 && form.date !== "";
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const canSubmit = form.title.trim().length > 0 && form.date !== "" && !saving && !deleting;
+
+  function toggleSite(id: string) {
+    setForm((f) => ({ ...f, siteIds: f.siteIds.includes(id) ? f.siteIds.filter((x) => x !== id) : [...f.siteIds, id] }));
+  }
+
+  async function handleDelete() {
+    if (!existing) return;
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    setDeleting(true);
+    setError(null);
+    try {
+      await calendarApi.remove(existing.id);
+      onDeleted(existing.id);
+    } catch (err) {
+      setError(err instanceof ApiError && err.detail ? err.detail : "Could not remove the event — try again.");
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  }
 
   const inputStyle: React.CSSProperties = {
     width: "100%", boxSizing: "border-box",
@@ -69,12 +114,14 @@ function AddEventModal({
       programId: form.programId || undefined,
       location: form.location.trim() || undefined,
       timeRange: form.timeRange.trim() || undefined,
+      meta: form.details.trim() || undefined,
+      siteIds: form.siteIds,
     };
     try {
-      const created = await calendarApi.create(dto);
-      onCreated(created);
-    } catch {
-      setError("Could not save event — make sure the backend is running.");
+      const saved = existing ? await calendarApi.update(existing.id, dto) : await calendarApi.create(dto);
+      onSaved(saved);
+    } catch (err) {
+      setError(err instanceof ApiError && err.detail ? err.detail : "Could not save event — make sure the backend is running.");
       setSaving(false);
     }
   }
@@ -86,8 +133,8 @@ function AddEventModal({
       <div style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(440px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
           <div>
-            <h3 style={{ fontSize: 15, fontWeight: 500, margin: "0 0 2px" }}>Add event</h3>
-            <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>Event will appear on the calendar</div>
+            <h3 style={{ fontSize: 15, fontWeight: 500, margin: "0 0 2px" }}>{editing ? "Edit event" : "Add event"}</h3>
+            <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>{editing ? "Changes show on the calendar right away" : "Event will appear on the calendar"}</div>
           </div>
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4, borderRadius: "var(--r-sm)" }}>
             <X style={{ width: 16, height: 16 }} />
@@ -111,21 +158,21 @@ function AddEventModal({
 
           <div>
             <div className="ss-label" style={{ marginBottom: 8 }}>Program <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
+            <ProgramPills programs={programs} value={form.programId || null} onChange={(id) => setForm((f) => ({ ...f, programId: id ?? "" }))} allLabel="None" />
+          </div>
+
+          <div>
+            <div className="ss-label" style={{ marginBottom: 8 }}>Sites <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Pick every location this is for</span></div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <button type="button" onClick={() => setForm(f => ({ ...f, programId: "" }))}
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "var(--r-pill)", border: `0.5px solid ${!form.programId ? "var(--border-hover)" : "var(--border)"}`, background: !form.programId ? "var(--bg)" : "var(--surface)", color: "var(--fg-secondary)", cursor: "pointer", fontSize: 13 }}>
-                None
-              </button>
-              {programs.map(p => {
-                const sel = form.programId === p.id;
+              {sites.map((st) => {
+                const on = form.siteIds.includes(st.id);
                 return (
-                  <button key={p.id} type="button" aria-pressed={sel} onClick={() => setForm(f => ({ ...f, programId: p.id }))}
-                    style={programPillStyle(p.colorHex, sel)}>
-                    <span className="ss-dot" style={{ background: programTint(p.colorHex).accent }} />
-                    {p.name}
+                  <button key={st.id} type="button" className={`ss-chip${on ? " is-active" : ""}`} aria-pressed={on} style={{ cursor: "pointer" }} onClick={() => toggleSite(st.id)}>
+                    {st.name}{on && <Check style={{ width: 12, height: 12 }} />}
                   </button>
                 );
               })}
+              {sites.length === 0 && <span style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>No sites set up yet — add them under Settings.</span>}
             </div>
           </div>
 
@@ -143,6 +190,13 @@ function AddEventModal({
                 style={inputStyle} />
             </div>
           </div>
+
+          <div>
+            <div className="ss-label" style={{ marginBottom: 6 }}>Details / link <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional — links become clickable</span></div>
+            <textarea rows={3} placeholder="Zoom link, what to bring, who to contact…" value={form.details}
+              onChange={(e) => setForm(f => ({ ...f, details: e.target.value }))}
+              style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+          </div>
         </div>
 
         {error && (
@@ -151,11 +205,19 @@ function AddEventModal({
           </div>
         )}
 
-        <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end", flexShrink: 0 }}>
-          <button className="ss-btn" type="button" onClick={onClose} disabled={saving}>Cancel</button>
-          <button className="ss-btn ss-btn-primary" type="button" disabled={!canSubmit || saving} onClick={handleSubmit}>
-            <Plus className="ss-btn-icon" />
-            {saving ? "Saving…" : "Add event"}
+        <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+          {editing && (
+            <button className="ss-btn" type="button" onClick={handleDelete} disabled={deleting || saving}
+              style={confirmDelete ? { background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" } : { color: "var(--danger)" }}>
+              {deleting ? <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 className="ss-btn-icon" />}
+              {deleting ? "Removing…" : confirmDelete ? "Confirm remove" : "Remove"}
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
+          <button className="ss-btn" type="button" onClick={onClose} disabled={saving || deleting}>Cancel</button>
+          <button className="ss-btn ss-btn-primary" type="button" disabled={!canSubmit} onClick={handleSubmit}>
+            {editing ? <Check className="ss-btn-icon" /> : <Plus className="ss-btn-icon" />}
+            {saving ? "Saving…" : editing ? "Save changes" : "Add event"}
           </button>
         </div>
       </div>
@@ -177,9 +239,12 @@ export default function CalendarPage() {
   const [events,    setEvents]    = useState<CalendarEventDto[]>([]);
   // Cached + shared via React Query (#34).
   const programs: ProgramSummaryDto[] = usePrograms().data ?? [];
+  const sites: SiteDto[] = useReferenceLists().data?.sites ?? [];
+  const { canManage } = useAuth();
   const [loading,   setLoading]   = useState(true);
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<CalendarEventDto | null>(null);
 
   // Reload events whenever the viewed month changes
   useEffect(() => {
@@ -273,10 +338,10 @@ export default function CalendarPage() {
               <button className="is-active">Month</button>
               <button>Week</button>
             </div>
-            <button className="ss-btn ss-btn-primary" type="button" onClick={() => setAddOpen(true)}>
+            {canManage && <button className="ss-btn ss-btn-primary" type="button" onClick={() => setAddOpen(true)}>
               <Plus className="ss-btn-icon" />
               Add event
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -351,17 +416,27 @@ export default function CalendarPage() {
                   </div>
                 ) : detailEvents.map(e => (
                   <div key={e.id} className="evt-card">
-                    <div className="et">
-                      <span className={`ss-dot ${slugFor(e)}`} />
-                      {e.title}
+                    <div className="et" style={{ alignItems: "flex-start" }}>
+                      <span className={`ss-dot ${slugFor(e)}`} style={{ marginTop: 5 }} />
+                      <span style={{ flex: 1 }}>{e.title}</span>
+                      {canManage && (
+                        <button type="button" title="Edit event" aria-label={`Edit ${e.title}`} onClick={() => setEditingEvent(e)}
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 2, display: "inline-flex" }}>
+                          <Pencil style={{ width: 13, height: 13 }} />
+                        </button>
+                      )}
                     </div>
-                    {e.location  && <div className="em"><MapPin />{e.location}</div>}
+                    {e.siteNames.length > 0 && <div className="em"><MapPin />{e.siteNames.join(" · ")}</div>}
+                    {e.location  && <div className="em"><MapPin style={{ visibility: e.siteNames.length ? "hidden" : "visible" }} /><span>{linkify(e.location)}</span></div>}
                     {e.timeRange && <div className="em"><Clock />{e.timeRange}</div>}
+                    {e.meta && <div className="em" style={{ alignItems: "flex-start" }}><Info style={{ marginTop: 2, flexShrink: 0 }} /><span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{linkify(e.meta)}</span></div>}
                   </div>
                 ))}
-                <button className="btn-dashed" type="button" onClick={() => setAddOpen(true)}>
-                  <Plus />Add event
-                </button>
+                {canManage && (
+                  <button className="btn-dashed" type="button" onClick={() => setAddOpen(true)}>
+                    <Plus />Add event
+                  </button>
+                )}
               </div>
 
               {otherEvents.length > 0 && (
@@ -371,13 +446,14 @@ export default function CalendarPage() {
                     {otherEvents.map(e => {
                       const label = parseLocalDate(e.date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
                       return (
-                        <div key={e.id} className="evt-card">
+                        <div key={e.id} className="evt-card" style={canManage ? { cursor: "pointer" } : undefined}
+                          onClick={canManage ? () => setEditingEvent(e) : undefined} title={canManage ? "Click to edit" : undefined}>
                           <div className="et">
                             <span className={`ss-dot ${slugFor(e)}`} />
                             {e.title}
                           </div>
                           <div className="em">
-                            <Clock />{label}{e.timeRange ? ` · ${e.timeRange}` : ""}
+                            <Clock />{label}{e.timeRange ? ` · ${e.timeRange}` : ""}{e.siteNames.length ? ` · ${e.siteNames.join(", ")}` : ""}
                           </div>
                         </div>
                       );
@@ -390,17 +466,26 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      {addOpen && (
-        <AddEventModal
+      {(addOpen || editingEvent) && (
+        <EventModal
           programs={programs}
+          sites={sites}
           defaultDate={defaultDate}
-          onClose={() => setAddOpen(false)}
-          onCreated={(e) => {
+          existing={editingEvent}
+          onClose={() => { setAddOpen(false); setEditingEvent(null); }}
+          onSaved={(e) => {
             const eDate = parseLocalDate(e.date);
-            if (eDate.getMonth() + 1 === viewMonth && eDate.getFullYear() === viewYear) {
-              setEvents(prev => [...prev, e]);
-            }
+            const inView = eDate.getMonth() + 1 === viewMonth && eDate.getFullYear() === viewYear;
+            setEvents((prev) => {
+              const rest = prev.filter((x) => x.id !== e.id);
+              return inView ? [...rest, e] : rest;
+            });
             setAddOpen(false);
+            setEditingEvent(null);
+          }}
+          onDeleted={(id) => {
+            setEvents((prev) => prev.filter((x) => x.id !== id));
+            setEditingEvent(null);
           }}
         />
       )}

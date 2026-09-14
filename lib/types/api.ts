@@ -669,6 +669,16 @@ export interface StaffSummaryDto {
   tShirtSize: string | null;
   onboardingProgressPct: number;
   programNames: string[];
+  /** Training/paperwork expiring within 60 days or already expired. Admin-only (empty for others). */
+  trainingAlerts: TrainingAlertDto[];
+}
+
+export interface TrainingAlertDto {
+  itemId: Guid;
+  label: string;
+  expiryDate: string;
+  /** Negative when already expired. */
+  daysUntil: number;
 }
 
 export interface StaffDetailDto extends StaffSummaryDto {
@@ -687,6 +697,8 @@ export interface CreateStaffDto {
 export interface ChecklistTemplateItemDto {
   section: string;
   label: string;
+  /** Renewal interval in months (TB 48, CPR 24, harassment 24); null for one-time items. */
+  renewalMonths?: number | null;
 }
 
 export interface UpdateChecklistTemplateDto {
@@ -699,6 +711,10 @@ export interface SetOnboardingItemDto {
   expiryDate?: string;
   /** True clears the stored expiry (null alone means "unchanged"). */
   clearExpiry?: boolean;
+  /** When the item was done; with a renewal interval the expiry is stamped from it. */
+  completedDate?: string;
+  /** Not required for this person (null = unchanged). */
+  isNotApplicable?: boolean;
 }
 
 export interface UpdateStaffDto {
@@ -1001,12 +1017,16 @@ export interface CalendarEventDto {
   id: Guid;
   title: string;
   location: string | null;
+  /** Free-text details; URLs render as links. */
   meta: string | null;
   date: string;
   timeRange: string | null;
   programId: Guid | null;
   programName: string | null;
   isUpcoming: boolean;
+  /** The sites this event is for — empty means org-wide. */
+  siteIds: Guid[];
+  siteNames: string[];
 }
 
 export interface CreateCalendarEventDto {
@@ -1016,7 +1036,11 @@ export interface CreateCalendarEventDto {
   location?: string;
   meta?: string;
   timeRange?: string;
+  siteIds?: Guid[];
 }
+
+/** Full replacement of an event's fields. */
+export type UpdateCalendarEventDto = CreateCalendarEventDto;
 
 // ── Year Calendar (annual themes + key arts dates) ────────────────────────────
 
@@ -1286,6 +1310,8 @@ export interface OnboardingItemDto {
   isCompleted: boolean;
   completedDate: string | null;
   expiryDate: string | null;
+  renewalMonths: number | null;
+  isNotApplicable: boolean;
   /** The paperwork behind the item — bytes come from /api/staff/{id}/onboarding/{itemId}/file. */
   hasFile: boolean;
   fileName: string | null;
