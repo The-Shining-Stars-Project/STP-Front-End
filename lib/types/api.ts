@@ -5,7 +5,7 @@ export type Guid = string;
 // ── Enums (mirror backend) ────────────────────────────────────────────────────
 
 export type ParticipantStatus = "Active" | "Prospective" | "Attention" | "Former" | "AuthPending" | "Inquiry" | "NotInterested";
-export type StaffRole = "Teacher" | "Coordinator" | "Admin";
+export type StaffRole = "Teacher" | "TeacherAssistant" | "Coordinator" | "Admin";
 export type AttendanceStatus = "Present" | "Absent" | "Unmarked";
 export type TaskStatus = "Upcoming" | "InProgress" | "Done" | "Overdue" | "Blocked";
 export type TaskPriority = "High" | "Medium" | "Low";
@@ -517,6 +517,7 @@ export interface PerStarPlanDto {
   participantId: Guid;
   participantName: string;
   participantInitials: string;
+  status: ParticipantStatus;
   programId: Guid;
   programName: string;
   programSlug: string;
@@ -1192,6 +1193,7 @@ export interface RosterEntryDto {
   participantId: Guid;
   participantName: string;
   participantInitials: string;
+  status: ParticipantStatus;
   programId: Guid;
   programName: string;
   programSlug: string;

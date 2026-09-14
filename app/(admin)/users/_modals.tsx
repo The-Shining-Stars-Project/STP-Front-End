@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { staffRoleLabel } from "@/lib/staffRoles";
 import {
   UserPlus,
   ShieldCheck,
@@ -220,7 +221,7 @@ export function CreateUserModal({
                 style={{ ...inputStyle, appearance: "auto" }}>
                 <option value="">Not linked</option>
                 {staff.map((s) => (
-                  <option key={s.id} value={s.id}>{s.fullName} — {s.role}</option>
+                  <option key={s.id} value={s.id}>{s.fullName} — {staffRoleLabel(s.role)}</option>
                 ))}
               </select>
             </div>
@@ -312,7 +313,7 @@ export function EditUserModal({
                 style={{ width: "100%", boxSizing: "border-box", border: "0.5px solid var(--border-hover)", borderRadius: "var(--r-md)", padding: "8px 12px", fontSize: 13, color: "var(--fg)", background: "var(--surface)", outline: "none", appearance: "auto" }}>
                 <option value="">Not linked</option>
                 {staff.map((m) => (
-                  <option key={m.id} value={m.id}>{m.fullName} — {m.role}{m.programNames.length ? ` (${m.programNames.join(", ")})` : " (no program yet)"}</option>
+                  <option key={m.id} value={m.id}>{m.fullName} — {staffRoleLabel(m.role)}{m.programNames.length ? ` (${m.programNames.join(", ")})` : " (no program yet)"}</option>
                 ))}
               </select>
               <div style={{ fontSize: 12, color: staffMemberId ? "var(--fg-tertiary)" : "var(--warning-text, var(--warning))", marginTop: 6 }}>

@@ -5,6 +5,7 @@ import { Target, Check } from "lucide-react";
 import { planningApi } from "@/lib/api/planning";
 import { useMyPrograms, useStaff, useObjectiveAreas } from "@/lib/api/hooks";
 import ProgramPills from "../components/ProgramPills";
+import StarStatusFilter, { DEFAULT_STAR_STATUS_FILTER, starStatusMatches, type StarStatusFilterValue } from "../components/StarStatusFilter";
 import type {
   PerStarPlanDto,
   ProgramSummaryDto,
@@ -43,6 +44,8 @@ export default function PlanningPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StarStatusFilterValue>(DEFAULT_STAR_STATUS_FILTER);
+  const activeStaff = useMemo(() => staff.filter((s) => !s.isFormer), [staff]);
 
   useEffect(() => {
     setLoading(true);
@@ -76,19 +79,20 @@ export default function PlanningPage() {
 
   const byProgram = useMemo(() => {
     const map = new Map<string, { name: string; slug: string; rows: PerStarPlanDto[] }>();
-    for (const p of plans) {
+    for (const p of plans.filter((x) => starStatusMatches(x.status, statusFilter))) {
       if (!map.has(p.programId)) map.set(p.programId, { name: p.programName || "No program", slug: p.programSlug, rows: [] });
       map.get(p.programId)!.rows.push(p);
     }
     for (const g of map.values()) g.rows.sort((a, b) => a.participantName.localeCompare(b.participantName));
     return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [plans]);
+  }, [plans, statusFilter]);
 
   return (
     <div className="adm-main">
       <div className="adm-topbar">
         <div className="titles"><h1>Per-Star Planning</h1></div>
         <div className="right" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <StarStatusFilter value={statusFilter} onChange={setStatusFilter} />
           <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
             style={{ border: "0.5px solid var(--border-hover)", borderRadius: "var(--r-md)", padding: "6px 8px", fontSize: 12, color: "var(--fg)", background: "var(--surface)", outline: "none" }} />
         </div>
@@ -141,7 +145,10 @@ export default function PlanningPage() {
                             <Label>Assigned staff</Label>
                             <select value={plan.assignedStaffId ?? ""} onChange={(e) => save(plan, { assignedStaffId: e.target.value || null })} style={fieldStyle}>
                               <option value="">—</option>
-                              {staff.map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
+                              {activeStaff.map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
+                              {plan.assignedStaffId && !activeStaff.some((s) => s.id === plan.assignedStaffId) && (
+                                <option value={plan.assignedStaffId}>{plan.assignedStaffName ?? "Former staff"} (former)</option>
+                              )}
                             </select>
                           </div>
                           <div>
@@ -161,7 +168,7 @@ export default function PlanningPage() {
                         </div>
 
                         <div>
-                          <Label>Monthly goal (+1 growing edge)</Label>
+                          <Label>Goal (+1 growing edge)</Label>
                           <input defaultValue={plan.monthlyGoal ?? ""} onBlur={(e) => { const v = e.target.value.trim() || null; if (v !== (plan.monthlyGoal ?? null)) save(plan, { monthlyGoal: v }); }} style={fieldStyle} />
                         </div>
                         <div>

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Users2, Check } from "lucide-react";
 import { rosterApi } from "@/lib/api/roster";
 import { useReferenceLists, useStaff } from "@/lib/api/hooks";
+import StarStatusFilter, { DEFAULT_STAR_STATUS_FILTER, starStatusMatches, type StarStatusFilterValue } from "../components/StarStatusFilter";
 import type {
   RosterEntryDto,
   SiteDto,
@@ -33,6 +34,11 @@ export default function RosterPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StarStatusFilterValue>(DEFAULT_STAR_STATUS_FILTER);
+
+  // Former staff stay selectable only where they are already the assignment, so an old
+  // roster still reads correctly without offering them for new ones.
+  const activeStaff = useMemo(() => staff.filter((m) => !m.isFormer), [staff]);
 
   // Reference lists + staff load once.
   // Roster reloads on term change.
@@ -73,17 +79,19 @@ export default function RosterPage() {
   }
 
   // Group by program (stable dimension) so rows don't jump while a site is being assigned.
+  const visible = useMemo(() => entries.filter((e) => starStatusMatches(e.status, statusFilter)), [entries, statusFilter]);
+
   const byProgram = useMemo(() => {
     const map = new Map<string, { name: string; slug: string; rows: RosterEntryDto[] }>();
-    for (const e of entries) {
+    for (const e of visible) {
       if (!map.has(e.programId)) map.set(e.programId, { name: e.programName || "No program", slug: e.programSlug, rows: [] });
       map.get(e.programId)!.rows.push(e);
     }
     for (const g of map.values()) g.rows.sort((a, b) => a.participantName.localeCompare(b.participantName));
     return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [entries]);
+  }, [visible]);
 
-  const assigned = entries.filter((e) => e.starGroupId && e.siteIds.length > 0).length;
+  const assigned = visible.filter((e) => e.starGroupId && e.siteIds.length > 0).length;
 
   // A Star can attend more than one site in a term (client ask, Sep 2026). Click a chip to
   // add or remove it; the first listed is the primary site everything single-site shows.
@@ -93,7 +101,7 @@ export default function RosterPage() {
     const siteNames = siteIds.map((id) => sites.find((s) => s.id === id)?.name ?? "").filter(Boolean);
     save(entry, { siteIds, siteNames, siteId: siteIds[0] ?? null, siteName: siteNames[0] ?? null });
   }
-  const counted = entries.filter((e) => e.countedInRatio).length;
+  const counted = visible.filter((e) => e.countedInRatio).length;
 
   return (
     <div className="adm-main">
@@ -102,6 +110,7 @@ export default function RosterPage() {
           <h1>Roster &amp; Assignments</h1>
         </div>
         <div className="right" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <StarStatusFilter value={statusFilter} onChange={setStatusFilter} />
           {QUARTERS.map((qn) => (
             <button key={qn} type="button" className={`ss-chip${quarter === qn ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => changeTerm(year, qn)}>
               Q{qn}
@@ -196,9 +205,13 @@ export default function RosterPage() {
                             </div>
                           </td>
                           <td style={{ padding: "6px 12px" }}>
-                            <select style={selectStyle} value={e.assignedStaffId ?? ""} onChange={(ev) => save(e, { assignedStaffId: ev.target.value || null })}>
+                            <select style={selectStyle} value={e.assignedStaffId ?? ""} onChange={(ev) => save(e, { assignedStaffId: ev.target.value || null })}
+                              title="Lists staff records from the Onboarding page — someone with only a login needs a staff record to appear here.">
                               <option value="">Unassigned</option>
-                              {staff.map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
+                              {activeStaff.map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
+                              {e.assignedStaffId && !activeStaff.some((s) => s.id === e.assignedStaffId) && (
+                                <option value={e.assignedStaffId}>{e.assignedStaffName ?? "Former staff"} (former)</option>
+                              )}
                             </select>
                           </td>
                           <td style={{ padding: "6px 12px", textAlign: "center" }}>

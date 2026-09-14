@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { staffRoleLabel } from "@/lib/staffRoles";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   UserPlus,
@@ -162,7 +163,7 @@ export default function UsersPage() {
                           {u.staffMemberId ? (
                             <span className="ss-meta">
                               {staff.find((m) => m.id === u.staffMemberId)?.fullName ?? "Linked"}
-                              {u.staffRole ? <span style={{ color: "var(--fg-tertiary)" }}> · {u.staffRole}</span> : null}
+                              {u.staffRole ? <span style={{ color: "var(--fg-tertiary)" }}> · {staffRoleLabel(u.staffRole)}</span> : null}
                             </span>
                           ) : u.role === "Admin" ? (
                             <span className="ss-meta" style={{ color: "var(--fg-tertiary)" }}>—</span>

@@ -323,7 +323,7 @@ export default function DocumentsPage() {
     <div className="adm-main">
       <div className="adm-topbar">
         <div className="titles">
-          <h1>Script Library</h1>
+          <h1>Scripts &amp; Lesson Plans</h1>
           <span className="date">
             {visible.length} script{visible.length !== 1 ? "s" : ""}
           </span>

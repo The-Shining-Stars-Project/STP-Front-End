@@ -82,7 +82,7 @@ const SECTIONS: NavSection[] = [
     label: "Staff",
     items: [
       { href: "/tasks", label: "Tasks", icon: CheckSquare },
-      { href: "/documents", label: "Scripts", icon: BookOpen },
+      { href: "/documents", label: "Scripts & Lesson Plans", icon: BookOpen },
     ],
   },
   {

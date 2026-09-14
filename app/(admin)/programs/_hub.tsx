@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { staffRoleLabel } from "@/lib/staffRoles";
 import { parseLocalDate } from "@/lib/format";
 import Link from "next/link";
 import {
@@ -89,7 +90,7 @@ function ManageStaffModal({
                 <span className={`ss-avatar ${s.role.toLowerCase()} sm`}>{s.initials}</span>
                 <div className="grow">
                   <div className="nm">{s.fullName}</div>
-                  <div className="sub">{s.role}</div>
+                  <div className="sub">{staffRoleLabel(s.role)}</div>
                 </div>
                 <button
                   className={`ss-btn${isAssigned ? "" : " ss-btn-primary"}`}
@@ -380,7 +381,7 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
                     >
                       {s.fullName}
                     </Link>
-                    <div className="sub">{s.role}</div>
+                    <div className="sub">{staffRoleLabel(s.role)}</div>
                   </div>
                   <span className="ss-badge is-active"><Check />Active</span>
                 </div>

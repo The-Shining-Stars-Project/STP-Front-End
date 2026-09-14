@@ -3,6 +3,8 @@
 "use client";
 
 import { useState } from "react";
+import { STAFF_ROLES, staffRoleLabel } from "@/lib/staffRoles";
+import { sizeOptions } from "@/lib/tshirtSizes";
 import {
   UserPlus,
   Check,
@@ -324,9 +326,9 @@ export function AddStaffModal({
           <div>
             <div className="ss-label" style={{ marginBottom: 8 }}>Role <span style={{ color: "var(--danger)", fontWeight: 400 }}>*</span></div>
             <div style={{ display: "flex", gap: 6 }}>
-              {(["Teacher", "Coordinator", "Admin"] as StaffRole[]).map((r) => (
+              {STAFF_ROLES.map((r) => (
                 <button key={r} type="button" className={`ss-chip${form.role === r ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, role: r }))}>
-                  {r}
+                  {staffRoleLabel(r)}
                 </button>
               ))}
             </div>
@@ -361,7 +363,7 @@ export function AddStaffModal({
             <div className="ss-label" style={{ marginBottom: 6 }}>T-shirt size <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
             <select value={form.tShirtSize} onChange={(e) => setForm((f) => ({ ...f, tShirtSize: e.target.value }))} style={{ ...inputStyle, width: "40%" }}>
               <option value="">Not set</option>
-              {["S", "M", "L", "XL", "2XL"].map((s) => <option key={s} value={s}>{s}</option>)}
+              {sizeOptions(form.tShirtSize).map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
         </div>

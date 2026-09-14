@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, Suspense } from "react";
+import { staffRoleLabel } from "@/lib/staffRoles";
 import { useSearchParams } from "next/navigation";
 import { parseLocalDate } from "@/lib/format";
 import { useQueryClient } from "@tanstack/react-query";
@@ -545,7 +546,7 @@ function StaffPageInner() {
                         {s.fullName}
                         {newHire && <span className="newhire-tag">New hire</span>}
                       </div>
-                      <div className="sub">{s.role} · {progLabel} · {hireLabel}{s.tShirtSize ? ` · Shirt ${s.tShirtSize}` : ""}</div>
+                      <div className="sub">{staffRoleLabel(s.role)} · {progLabel} · {hireLabel}{s.tShirtSize ? ` · Shirt ${s.tShirtSize}` : ""}</div>
                     </div>
                     <div className="sacc-prog">
                       <div className="ss-progress">

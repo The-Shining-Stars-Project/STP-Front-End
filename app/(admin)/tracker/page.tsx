@@ -10,6 +10,7 @@ import { useAuth } from "@/lib/auth/AuthProvider";
 import { programTint } from "@/lib/programColor";
 import { Skeleton } from "../components/Skeleton";
 import ProgramPills from "../components/ProgramPills";
+import StarStatusFilter, { DEFAULT_STAR_STATUS_FILTER, starStatusMatches, type StarStatusFilterValue } from "../components/StarStatusFilter";
 import type {
   ProgramSummaryDto,
   ParticipantSummaryDto,
@@ -89,6 +90,7 @@ export default function WeeklyDataPage() {
   const [programFilter, setProgramFilter] = useState<string | null>(null); // null = all programs
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [week, setWeek] = useState(1);
+  const [statusFilter, setStatusFilter] = useState<StarStatusFilterValue>(DEFAULT_STAR_STATUS_FILTER);
 
   // The term's roster: which staff member each star is assigned to. A management user sees
   // the whole roster, a teacher their programs' (the API scopes it).
@@ -156,11 +158,12 @@ export default function WeeklyDataPage() {
         program,
         stars: allParticipants
           .filter((p) => (p.programId === program.id || p.secondaryProgramId === program.id))
+          .filter((p) => starStatusMatches(p.status, statusFilter))
           .filter((p) => !staffScope || staffScope.ids.has(p.id))
           .sort((a, b) => a.fullName.localeCompare(b.fullName)),
       }))
       .filter((g) => g.stars.length > 0 || programFilter !== null),
-    [programsInView, allParticipants, staffScope, programFilter]
+    [programsInView, allParticipants, staffScope, programFilter, statusFilter]
   );
 
   // Focus skills per program (all weeks of the month) and every score for the stars in view.
@@ -235,6 +238,7 @@ export default function WeeklyDataPage() {
       <div className="adm-topbar">
         <div className="titles"><h1>Weekly Data</h1></div>
         <div className="right" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <StarStatusFilter value={statusFilter} onChange={setStatusFilter} />
           <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
             style={{ border: "0.5px solid var(--border-hover)", borderRadius: "var(--r-md)", padding: "6px 8px", fontSize: 12, color: "var(--fg)", background: "var(--surface)", outline: "none" }} />
         </div>
