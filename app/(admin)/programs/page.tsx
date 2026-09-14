@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AlertCircle, ChevronRight, Plus, X, Pencil, Check } from "lucide-react";
 import { programsApi } from "@/lib/api/programs";
-import { usePrograms, queryKeys } from "@/lib/api/hooks";
+import { useMyPrograms, queryKeys } from "@/lib/api/hooks";
 import LoadError from "@/app/components/LoadError";
 import { ApiError } from "@/lib/api/client";
 import type { ProgramSummaryDto, CreateProgramDto, UpdateProgramDto } from "@/lib/types/api";
@@ -278,9 +278,10 @@ function ProgramFormModal({
 
 export default function ProgramsPage() {
   const router = useRouter();
-  // Cached + shared with every other page that lists programs (#34).
+  // The caller's programs (all of them for an admin): a teacher's Programs page lists only
+  // the programs they teach, matching the scoped detail page behind each card.
   const queryClient = useQueryClient();
-  const programsQ = usePrograms();
+  const programsQ = useMyPrograms();
   const loading = programsQ.isPending;
   const programs = useMemo(() => (programsQ.data ?? []).map(dtoToCard), [programsQ.data]);
   const [mode, setMode] = useState<"create" | "edit" | null>(null);

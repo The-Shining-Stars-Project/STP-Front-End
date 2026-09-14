@@ -10,8 +10,10 @@ import {
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { programsApi } from "@/lib/api/programs";
+import { ApiError } from "@/lib/api/client";
 import { useStaff, queryKeys } from "@/lib/api/hooks";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import LoadError from "@/app/components/LoadError";
 import EnrollStudentModal from "../components/EnrollStudentModal";
 import type { ProgramDetailDto, StaffSummaryDto } from "@/lib/types/api";
 
@@ -138,6 +140,27 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
   const [staffOpen, setStaffOpen] = useState(false);
 
   const colorVar  = `var(--${slug})`;
+
+  // The detail is scoped to the caller's programs: a teacher opening a program they are not
+  // assigned to gets a 403, which deserves a sentence rather than an empty page.
+  if (!loading && detailQ.isError) {
+    const forbidden = detailQ.error instanceof ApiError && detailQ.error.status === 403;
+    return (
+      <div className="adm-main">
+        <div className="adm-topbar"><div className="titles"><h1>{slug.toUpperCase()}</h1></div></div>
+        <div className="adm-content">
+          {forbidden ? (
+            <div className="info-note">
+              <AlertCircle />
+              <span>You&apos;re not assigned to this program, so its stars aren&apos;t shown. An admin can add you from this program&apos;s <strong>Manage staff</strong> button. <Link href="/programs">Back to programs</Link></span>
+            </div>
+          ) : (
+            <LoadError title="Couldn't load this program" error={detailQ.error} onRetry={() => detailQ.refetch()} />
+          )}
+        </div>
+      </div>
+    );
+  }
 
   const label       = detail?.name         ?? slug.toUpperCase();
   const enrolled    = detail?.enrolledCount ?? 0;
