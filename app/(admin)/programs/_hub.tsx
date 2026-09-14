@@ -11,6 +11,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { programsApi } from "@/lib/api/programs";
 import { useStaff, queryKeys } from "@/lib/api/hooks";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import EnrollStudentModal from "../components/EnrollStudentModal";
 import type { ProgramDetailDto, StaffSummaryDto } from "@/lib/types/api";
 
@@ -132,6 +133,7 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
   });
   const detail: ProgramDetailDto | null = detailQ.data ?? null;
   const loading = detailQ.isPending;
+  const { isAdmin } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
   const [staffOpen, setStaffOpen] = useState(false);
 
@@ -162,10 +164,13 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
           <span className="date">{new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</span>
         </div>
         <div className="right">
-          <button className="ss-btn ss-btn-primary" type="button" disabled={!detail} onClick={() => setAddOpen(true)}>
-            <UserPlus className="ss-btn-icon" />
-            Enroll star
-          </button>
+          {/* Enrolling is an admin task (client rule) — teachers don't get the button. */}
+          {isAdmin && (
+            <button className="ss-btn ss-btn-primary" type="button" disabled={!detail} onClick={() => setAddOpen(true)}>
+              <UserPlus className="ss-btn-icon" />
+              Enroll star
+            </button>
+          )}
         </div>
       </div>
 

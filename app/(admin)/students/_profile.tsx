@@ -88,6 +88,7 @@ type Form = {
   areasOfConcern: string; scEmail: string; scPhone: string; remind: string;
   intakeDocs: boolean; diploma: "" | "yes" | "no"; secondaryProgramId: string;
   startDate: string; emergencyContacts: string[];
+  sdp: "" | "yes" | "no"; sdpFms: string; sdpFacilitator: string; sdpStartDate: string;
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -95,7 +96,7 @@ type Form = {
 export default function ParticipantProfile({ id }: { id: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { isAdmin } = useAuth();
+  const { isAdmin, canManage } = useAuth();
 
   const [detail, setDetail] = useState<ParticipantDetailDto | null>(null);
   // Cached + shared via React Query (#34).
@@ -110,6 +111,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
     ippExpiry: "", dob: "", allergies: "", anaphylactic: false,
     areasOfConcern: "", scEmail: "", scPhone: "", remind: "", intakeDocs: false, diploma: "", secondaryProgramId: "",
     startDate: "", emergencyContacts: [""],
+    sdp: "", sdpFms: "", sdpFacilitator: "", sdpStartDate: "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -157,7 +159,35 @@ export default function ParticipantProfile({ id }: { id: string }) {
       secondaryProgramId: d.secondaryProgramId ?? "",
       startDate: d.startDate,
       emergencyContacts: draftFromContacts(d.emergencyContacts),
+      sdp: d.isSdpClient === null ? "" : d.isSdpClient ? "yes" : "no",
+      sdpFms: d.sdpFmsName ?? "",
+      sdpFacilitator: d.sdpIndependentFacilitator ?? "",
+      sdpStartDate: d.sdpStartDate ?? "",
     };
+  }
+
+  // Teachers may change only the intake notes. Their own small edit mode, separate from the
+  // management "Edit profile" flow, so a teacher never sees fields they cannot save.
+  const [notesEditing, setNotesEditing] = useState(false);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [notesSaving, setNotesSaving] = useState(false);
+
+  function startNotesEdit() { setNotesDraft(detail?.intakeNotes ?? ""); setError(null); setNotesEditing(true); }
+  async function saveNotes() {
+    if (!detail) return;
+    setNotesSaving(true);
+    setError(null);
+    try {
+      const updated = await participantsApi.updateIntakeNotes(id, { intakeNotes: notesDraft.trim() });
+      setDetail(updated);
+      setForm(formFrom(updated));
+      setNotesEditing(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.participants });
+    } catch (err) {
+      setError(err instanceof ApiError && err.detail ? err.detail : "Could not save the notes — try again.");
+    } finally {
+      setNotesSaving(false);
+    }
   }
 
   function startEdit() { if (detail) setForm(formFrom(detail)); setError(null); setEditing(true); }
@@ -200,6 +230,11 @@ export default function ParticipantProfile({ id }: { id: string }) {
       startDate: form.startDate || undefined,
       // Always sent: the list replaces what is stored, and an empty list clears it.
       emergencyContacts: cleanContacts(form.emergencyContacts),
+      isSdpClient: form.sdp === "" ? undefined : form.sdp === "yes",
+      sdpFmsName: form.sdp === "yes" ? form.sdpFms.trim() : "",
+      sdpIndependentFacilitator: form.sdp === "yes" ? form.sdpFacilitator.trim() : "",
+      sdpStartDate: form.sdp === "yes" && form.sdpStartDate ? form.sdpStartDate : undefined,
+      clearSdpStartDate: !(form.sdp === "yes" && form.sdpStartDate),
     };
     try {
       const updated = await participantsApi.update(id, dto);
@@ -307,6 +342,14 @@ export default function ParticipantProfile({ id }: { id: string }) {
                   {saving ? "Saving…" : "Save changes"}
                 </button>
               </>
+            ) : notesEditing ? (
+              <>
+                <button className="ss-btn" type="button" onClick={() => setNotesEditing(false)} disabled={notesSaving}>Cancel</button>
+                <button className="ss-btn ss-btn-primary" type="button" onClick={saveNotes} disabled={notesSaving}>
+                  {notesSaving ? <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} /> : <Check className="ss-btn-icon" />}
+                  {notesSaving ? "Saving…" : "Save notes"}
+                </button>
+              </>
             ) : (
               <>
                 {isAdmin && (
@@ -314,9 +357,15 @@ export default function ParticipantProfile({ id }: { id: string }) {
                     <Trash2 className="ss-btn-icon" />Delete
                   </button>
                 )}
-                <button className="ss-btn ss-btn-primary" type="button" onClick={startEdit}>
-                  <Pencil className="ss-btn-icon" />Edit profile
-                </button>
+                {canManage ? (
+                  <button className="ss-btn ss-btn-primary" type="button" onClick={startEdit}>
+                    <Pencil className="ss-btn-icon" />Edit profile
+                  </button>
+                ) : (
+                  <button className="ss-btn ss-btn-primary" type="button" onClick={startNotesEdit}>
+                    <Pencil className="ss-btn-icon" />Edit notes
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -538,6 +587,36 @@ export default function ParticipantProfile({ id }: { id: string }) {
               )}
 
               {field(
+                "SDP client",
+                detail.isSdpClient === null ? "—" : detail.isSdpClient ? "Yes" : "No",
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button type="button" className={`ss-chip${form.sdp === "yes" ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, sdp: "yes" }))}>Yes</button>
+                  <button type="button" className={`ss-chip${form.sdp === "no" ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, sdp: "no" }))}>No</button>
+                  <button type="button" className={`ss-chip${form.sdp === "" ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, sdp: "" }))}>Not recorded</button>
+                </div>
+              )}
+
+              {(editing ? form.sdp === "yes" : detail.isSdpClient === true) && (
+                <>
+                  {field(
+                    "FMS",
+                    detail.sdpFmsName || "—",
+                    <input type="text" value={form.sdpFms} placeholder="Financial Management Service" onChange={(e) => setForm((f) => ({ ...f, sdpFms: e.target.value }))} style={inputStyle} />
+                  )}
+                  {field(
+                    "Independent Facilitator",
+                    detail.sdpIndependentFacilitator || "—",
+                    <input type="text" value={form.sdpFacilitator} placeholder="Name" onChange={(e) => setForm((f) => ({ ...f, sdpFacilitator: e.target.value }))} style={inputStyle} />
+                  )}
+                  {field(
+                    "SDP start date",
+                    detail.sdpStartDate ? fmtDate(detail.sdpStartDate) : "—",
+                    <input type="date" value={form.sdpStartDate} onChange={(e) => setForm((f) => ({ ...f, sdpStartDate: e.target.value }))} style={inputStyle} />
+                  )}
+                </>
+              )}
+
+              {field(
                 "Intake docs submitted",
                 detail.intakeDocsSubmitted ? <span className="ss-badge is-active"><CheckCircle2 />Yes</span> : <span className="ss-badge is-attention"><AlertCircle />No</span>,
                 <div style={{ display: "flex", gap: 6 }}>
@@ -561,9 +640,11 @@ export default function ParticipantProfile({ id }: { id: string }) {
                   "Intake notes",
                   // pre-wrap keeps the paragraphs the intake worker typed; overflowWrap stops a
                   // long unbroken string (a URL, a run of digits) pushing the card wider.
-                  detail.intakeNotes
-                    ? <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.5 }}>{detail.intakeNotes}</div>
-                    : "—",
+                  notesEditing
+                    ? <textarea value={notesDraft} rows={6} autoFocus placeholder="Anything worth remembering from intake…" onChange={(e) => setNotesDraft(e.target.value)} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }} />
+                    : detail.intakeNotes
+                      ? <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.5 }}>{detail.intakeNotes}</div>
+                      : "—",
                   <textarea value={form.intakeNotes} rows={6} placeholder="Anything worth remembering from intake…" onChange={(e) => setForm((f) => ({ ...f, intakeNotes: e.target.value }))} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }} />
                 )}
               </div>

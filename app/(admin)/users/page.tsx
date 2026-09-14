@@ -12,6 +12,7 @@ import {
   KeyRound,
   Trash2,
   ShieldOff,
+  AlertTriangle,
 } from "lucide-react";
 import { useUsers, useStaff, queryKeys } from "@/lib/api/hooks";
 import LoadError from "@/app/components/LoadError";
@@ -108,6 +109,7 @@ export default function UsersPage() {
                     <th>User</th>
                     <th>Email</th>
                     <th>Role</th>
+                    <th>Staff record</th>
                     <th>Status</th>
                     <th>Two-factor</th>
                     <th style={{ width: 150, textAlign: "right" }}>Actions</th>
@@ -116,13 +118,13 @@ export default function UsersPage() {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={6} style={{ textAlign: "center", padding: "32px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>
+                      <td colSpan={7} style={{ textAlign: "center", padding: "32px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>
                         Loading users…
                       </td>
                     </tr>
                   ) : usersQ.isError ? (
                     <tr>
-                      <td colSpan={6}>
+                      <td colSpan={7}>
                         <LoadError
                           title="Couldn't load users"
                           error={usersQ.error}
@@ -132,7 +134,7 @@ export default function UsersPage() {
                     </tr>
                   ) : users.length === 0 ? (
                     <tr>
-                      <td colSpan={6} style={{ textAlign: "center", padding: "40px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>
+                      <td colSpan={7} style={{ textAlign: "center", padding: "40px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>
                         No users yet — create one to get started.
                       </td>
                     </tr>
@@ -154,6 +156,22 @@ export default function UsersPage() {
                           </div>
                         </td>
                         <td className="ss-meta">{u.email}</td>
+                        {/* A Staff account sees nothing until it is linked to a staff record
+                            that is assigned to a program — make the missing link visible. */}
+                        <td>
+                          {u.staffMemberId ? (
+                            <span className="ss-meta">
+                              {staff.find((m) => m.id === u.staffMemberId)?.fullName ?? "Linked"}
+                              {u.staffRole ? <span style={{ color: "var(--fg-tertiary)" }}> · {u.staffRole}</span> : null}
+                            </span>
+                          ) : u.role === "Admin" ? (
+                            <span className="ss-meta" style={{ color: "var(--fg-tertiary)" }}>—</span>
+                          ) : (
+                            <span className="ss-badge is-attention" title="Not linked: this login sees no stars, classes or rosters until it is linked to a staff record and that record is assigned to a program.">
+                              <AlertTriangle />Not linked
+                            </span>
+                          )}
+                        </td>
                         <td>
                           <span className={`ss-badge ${u.role === "Admin" ? "is-attention" : ""}`}>
                             {u.role === "Admin" ? <ShieldCheck /> : <UserIcon />}
@@ -227,6 +245,7 @@ export default function UsersPage() {
       {editing && (
         <EditUserModal
           target={editing}
+          staff={staff}
           isSelf={currentUser?.id === editing.id}
           onClose={() => setEditing(null)}
           onSaved={(u) => {

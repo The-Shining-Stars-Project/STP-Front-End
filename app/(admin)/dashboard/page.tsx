@@ -310,10 +310,13 @@ export default function DashboardPage() {
               </span>
             ))}
           </div>
-          <button className="ss-btn ss-btn-primary" type="button" onClick={() => setAddOpen(true)}>
-            <Plus className="ss-btn-icon" />
-            Add star
-          </button>
+          {/* Adding a star is an admin task (client rule) — teachers don't get the button. */}
+          {isAdmin && (
+            <button className="ss-btn ss-btn-primary" type="button" onClick={() => setAddOpen(true)}>
+              <Plus className="ss-btn-icon" />
+              Add star
+            </button>
+          )}
         </div>
       </div>
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { PenLine, Check, X, Info } from "lucide-react";
 import { useMyPrograms, useParticipants, useObjectiveAreas, useStaff } from "@/lib/api/hooks";
 import { progressApi } from "@/lib/api/progress";
@@ -255,6 +256,9 @@ export default function WeeklyDataPage() {
                 </button>
               );
             })}
+          </div>
+          <div style={{ fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)" }}>
+            Teacher assignments are set each quarter on the <Link href="/roster" style={{ color: "var(--primary)" }}>Roster</Link> page (the &ldquo;Assigned staff&rdquo; column). A teacher&apos;s chip shows those stars.
           </div>
           {staffScope && !staffScope.fromRoster && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)" }}>

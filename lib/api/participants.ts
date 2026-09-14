@@ -4,6 +4,7 @@ import type {
   ParticipantDetailDto,
   CreateParticipantDto,
   UpdateParticipantDto,
+  UpdateIntakeNotesDto,
   ParticipantArtsProfileDto,
   UpsertArtsProfileDto,
   DocumentRecordDto,
@@ -18,6 +19,8 @@ export const participantsApi = {
   create:   (dto: CreateParticipantDto)     => api.post<ParticipantDetailDto>("/api/participants", dto),
   update:   (id: string, dto: UpdateParticipantDto) => api.put<ParticipantDetailDto>(`/api/participants/${id}`, dto),
   remove:   (id: string)                    => api.delete<void>(`/api/participants/${id}`),
+  /** Notes only — the one edit a teacher may make on a star. */
+  updateIntakeNotes: (id: string, dto: UpdateIntakeNotesDto) => api.put<ParticipantDetailDto>(`/api/participants/${id}/intake-notes`, dto),
 
   getArtsProfile:    (id: string)                       => api.get<ParticipantArtsProfileDto>(`/api/participants/${id}/arts-profile`),
   upsertArtsProfile: (id: string, dto: UpsertArtsProfileDto) => api.put<ParticipantArtsProfileDto>(`/api/participants/${id}/arts-profile`, dto),

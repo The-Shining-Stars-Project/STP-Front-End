@@ -47,6 +47,8 @@ export interface UserDto {
   role: UserRole;
   isActive: boolean;
   staffMemberId: Guid | null;
+  /** The linked staff record's role; null when not linked. Teachers read + notes, Coordinators manage. */
+  staffRole: StaffRole | null;
   /**
    * Whether this account has a confirmed second factor. Not a secret — the admin user
    * list needs it to show who is still unenrolled, and the account page uses it to
@@ -60,6 +62,12 @@ export interface UpdateUserDto {
   role?: UserRole;
   isActive?: boolean;
   staffMemberId?: Guid;
+  /** True removes the staff link (omitting staffMemberId alone means "unchanged"). */
+  clearStaffMember?: boolean;
+}
+
+export interface UpdateIntakeNotesDto {
+  intakeNotes?: string;
 }
 
 export interface ResetPasswordDto {
@@ -309,6 +317,12 @@ export interface ParticipantSummaryDto {
   hasHighSchoolDiploma: boolean | null;
   /** Up to five free-text emergency contacts ("name – phone"), in the order entered. */
   emergencyContacts: string[];
+  /** Self-Determination Program: null = not recorded, true/false = answered. */
+  isSdpClient: boolean | null;
+  sdpFmsName: string | null;
+  sdpIndependentFacilitator: string | null;
+  /** yyyy-MM-dd, null when not set. Always the first of a month by policy. */
+  sdpStartDate: string | null;
   secondaryProgramId: Guid | null;
   secondaryProgramName: string | null;
   secondaryProgramSlug: string | null;
@@ -592,6 +606,10 @@ export interface CreateParticipantDto {
   hasHighSchoolDiploma?: boolean;
   /** Up to five free-text emergency contacts. */
   emergencyContacts?: string[];
+  isSdpClient?: boolean;
+  sdpFmsName?: string;
+  sdpIndependentFacilitator?: string;
+  sdpStartDate?: string;
   secondaryProgramId?: Guid;
 }
 
@@ -606,6 +624,11 @@ export interface UpdateParticipantDto {
   startDate?: string;
   /** Replaces the list when present (empty clears); omit to leave unchanged. */
   emergencyContacts?: string[];
+  isSdpClient?: boolean;
+  sdpFmsName?: string;
+  sdpIndependentFacilitator?: string;
+  sdpStartDate?: string;
+  clearSdpStartDate?: boolean;
   guardianName?: string;
   guardianPhone?: string;
   guardianEmail?: string;

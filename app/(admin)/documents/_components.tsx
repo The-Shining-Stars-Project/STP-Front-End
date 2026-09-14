@@ -18,6 +18,7 @@ import {
   Trash2,
   Loader2,
   AlertCircle,
+  Eye,
 } from "lucide-react";
 
 import { useDialogFocus } from "@/lib/useDialogFocus";
@@ -505,6 +506,7 @@ export function ScriptDetailPanel({
   onClose,
   onEdit,
   onDownloadPdf,
+  onViewPdf,
   onUploadPdf,
   onRemovePdf,
   pdfBusy = false,
@@ -514,6 +516,8 @@ export function ScriptDetailPanel({
   onClose: () => void;
   onEdit?: () => void;
   onDownloadPdf?: () => void;
+  /** Opens the PDF in the in-app viewer instead of saving it. */
+  onViewPdf?: () => void;
   onUploadPdf?: (file: File) => void;
   onRemovePdf?: () => void;
   /** An upload, download or removal is in flight for this script. */
@@ -804,6 +808,18 @@ export function ScriptDetailPanel({
                       if (file) onUploadPdf?.(file);
                     }}
                   />
+                  {script.pdf && onViewPdf && (
+                    <button
+                      type="button"
+                      className="ss-btn ss-btn-primary"
+                      style={smallBtnStyle}
+                      onClick={onViewPdf}
+                      disabled={pdfBusy}
+                    >
+                      <Eye className="ss-btn-icon" />
+                      View
+                    </button>
+                  )}
                   {canDownload && (
                     <button
                       type="button"
@@ -927,10 +943,13 @@ export function ScriptCard({
   script,
   onViewDetails,
   onDownloadPdf,
+  onViewPdf,
 }: {
   script: Script;
   onViewDetails: () => void;
   onDownloadPdf?: () => void;
+  /** Opens the PDF in the in-app viewer. */
+  onViewPdf?: () => void;
 }) {
   const TypeIcon = script.type === "musical" ? Music2 : FileText;
   const { bg, color } = STATUS_STYLE[script.status];
@@ -1084,6 +1103,21 @@ export function ScriptCard({
           background: "var(--bg)",
         }}
       >
+        {script.pdf && onViewPdf && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onViewPdf(); }}
+            title={script.pdf.fileName}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12,
+              background: "none", border: "none", padding: 0, cursor: "pointer",
+              color: "var(--primary)",
+            }}
+          >
+            <Eye style={{ width: 13, height: 13 }} />
+            View PDF
+          </button>
+        )}
         <button
           type="button"
           onClick={onDownloadPdf}

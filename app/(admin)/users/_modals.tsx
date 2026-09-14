@@ -250,11 +250,13 @@ export function CreateUserModal({
 
 export function EditUserModal({
   target,
+  staff,
   isSelf,
   onClose,
   onSaved,
 }: {
   target: UserDto;
+  staff: StaffSummaryDto[];
   isSelf: boolean;
   onClose: () => void;
   onSaved: (u: UserDto) => void;
@@ -264,16 +266,22 @@ export function EditUserModal({
   useEscapeKey(onClose);
   const panelRef = useDialogFocus<HTMLDivElement>();
   const [isActive, setIsActive] = useState(target.isActive);
+  // The staff link can now be set after creation — an unlinked Staff login sees nothing.
+  const [staffMemberId, setStaffMemberId] = useState(target.staffMemberId ?? "");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const dirty = fullName.trim() !== target.fullName || role !== target.role || isActive !== target.isActive;
+  const staffDirty = staffMemberId !== (target.staffMemberId ?? "");
+  const dirty = fullName.trim() !== target.fullName || role !== target.role || isActive !== target.isActive || staffDirty;
   const canSubmit = fullName.trim().length > 0 && dirty;
 
   async function handleSubmit() {
     setSaving(true);
     setError(null);
-    const dto: UpdateUserDto = { fullName: fullName.trim(), role, isActive };
+    const dto: UpdateUserDto = {
+      fullName: fullName.trim(), role, isActive,
+      ...(staffDirty ? (staffMemberId ? { staffMemberId } : { clearStaffMember: true }) : {}),
+    };
     try {
       const updated = await authApi.update(target.id, dto);
       onSaved(updated);
@@ -297,6 +305,23 @@ export function EditUserModal({
         </div>
 
         <div style={{ padding: "var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-4)", overflowY: "auto" }}>
+          {role === "Staff" && (
+            <div>
+              <label className="ss-label" htmlFor="eu-staff" style={{ display: "block", marginBottom: 6 }}>Link to staff record</label>
+              <select id="eu-staff" value={staffMemberId} onChange={(e) => setStaffMemberId(e.target.value)}
+                style={{ width: "100%", boxSizing: "border-box", border: "0.5px solid var(--border-hover)", borderRadius: "var(--r-md)", padding: "8px 12px", fontSize: 13, color: "var(--fg)", background: "var(--surface)", outline: "none", appearance: "auto" }}>
+                <option value="">Not linked</option>
+                {staff.map((m) => (
+                  <option key={m.id} value={m.id}>{m.fullName} — {m.role}{m.programNames.length ? ` (${m.programNames.join(", ")})` : " (no program yet)"}</option>
+                ))}
+              </select>
+              <div style={{ fontSize: 12, color: staffMemberId ? "var(--fg-tertiary)" : "var(--warning-text, var(--warning))", marginTop: 6 }}>
+                {staffMemberId
+                  ? "Stars, classes and rosters this login sees come from the programs this staff record is assigned to (Programs page → Manage staff)."
+                  : "Not linked: this login will see no stars, classes or rosters."}
+              </div>
+            </div>
+          )}
           <div>
             <label className="ss-label" htmlFor="eu-name" style={{ display: "block", marginBottom: 6 }}>Full name</label>
             <input id="eu-name" type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} style={inputStyle} />

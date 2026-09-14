@@ -577,7 +577,11 @@ export default function StudentsPage() {
                 ) : filtered.length === 0 ? (
                   <tr>
                     <td colSpan={8} style={{ textAlign: "center", padding: "40px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>
-                      {data.length === 0 ? "No stars yet — add one to get started." : "No stars match the current filters."}
+                      {data.length > 0
+                        ? "No stars match the current filters."
+                        : isAdmin
+                          ? "No stars yet — add one to get started."
+                          : "No stars in your programs yet. If you expect to see stars here, an admin needs to link your login to your staff record (Users page) and add you to your program (Programs page → Manage staff)."}
                     </td>
                   </tr>
                 ) : pageRows.map((d) => {

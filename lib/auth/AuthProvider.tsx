@@ -15,6 +15,12 @@ type AuthState = {
   isAuthenticated: boolean;
   isAdmin: boolean;
   /**
+   * May edit management data (star profiles, rosters, focus skills): an Admin account, or a
+   * staff account whose linked staff record is a Coordinator or Admin. Mirrors the API's
+   * ManagementWrite policy so teachers don't get buttons that 403.
+   */
+  canManage: boolean;
+  /**
    * The backend is refusing everything except enrollment because this account has no second
    * factor. UX only — MfaEnforcementFilter is what actually protects the data.
    */
@@ -147,6 +153,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         isAuthenticated: user !== null,
         isAdmin: user?.role === "Admin",
+        canManage: user?.role === "Admin" || user?.staffRole === "Coordinator" || user?.staffRole === "Admin",
         mfaEnrollmentRequired,
         login,
         verifyMfa,

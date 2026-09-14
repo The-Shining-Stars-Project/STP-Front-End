@@ -171,6 +171,30 @@ export default function DocumentsPage() {
     }
   }
 
+  /**
+   * The in-window viewer Rachel asked for: fetch the bytes through the same authenticated
+   * pipeline as a download, hand the browser an object URL, and show it in an iframe. The
+   * browser's own PDF viewer renders it; nothing is saved unless they press Download there.
+   */
+  const [viewer, setViewer] = useState<{ title: string; url: string } | null>(null);
+  function closeViewer() {
+    setViewer((v) => { if (v) URL.revokeObjectURL(v.url); return null; });
+  }
+  async function viewPdf(script: Script) {
+    if (!script.id || !script.pdf) return;
+    setPdfNotice(null);
+    setPdfBusyId(script.id);
+    try {
+      const { blob } = await scriptsApi.downloadPdf(script.id);
+      const url = URL.createObjectURL(new Blob([blob], { type: "application/pdf" }));
+      setViewer({ title: script.title, url });
+    } catch (err) {
+      setPdfNotice({ scriptId: script.id, title: script.title, message: describeError(err) });
+    } finally {
+      setPdfBusyId(null);
+    }
+  }
+
   async function downloadPdf(script: Script) {
     if (!script.id || !script.pdf) return;
     setPdfNotice(null);
@@ -429,6 +453,7 @@ export default function DocumentsPage() {
                 script={script}
                 onViewDetails={() => setSelectedScript(script)}
                 onDownloadPdf={script.id ? () => downloadPdf(script) : undefined}
+                onViewPdf={script.id ? () => viewPdf(script) : undefined}
               />
             ))}
           </div>
@@ -488,6 +513,7 @@ export default function DocumentsPage() {
           onClose={() => setSelectedScript(null)}
           onEdit={() => openEdit(selectedScript)}
           onDownloadPdf={selectedScript.id ? () => downloadPdf(selectedScript) : undefined}
+          onViewPdf={selectedScript.id ? () => viewPdf(selectedScript) : undefined}
           onUploadPdf={
             selectedScript.id
               ? (file) => uploadPdf(selectedScript.id!, selectedScript.title, file)
@@ -497,6 +523,27 @@ export default function DocumentsPage() {
           pdfBusy={pdfBusyId !== null && pdfBusyId === selectedScript.id}
           pdfError={pdfNotice && pdfNotice.scriptId === selectedScript.id ? pdfNotice.message : null}
         />
+      )}
+
+      {viewer && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${viewer.title} — PDF`}
+          style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300, padding: "var(--space-4)" }}
+        >
+          <div style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(1100px, 100%)", height: "min(92vh, 1400px)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
+              <BookOpen style={{ width: 16, height: 16, color: "var(--primary)", flexShrink: 0 }} />
+              <div style={{ fontSize: 14, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{viewer.title}</div>
+              <a className="ss-btn" href={viewer.url} target="_blank" rel="noopener" style={{ textDecoration: "none" }}>Open in new tab</a>
+              <button type="button" className="ss-btn" onClick={closeViewer} aria-label="Close viewer">
+                <X className="ss-btn-icon" />Close
+              </button>
+            </div>
+            <iframe src={viewer.url} title={`${viewer.title} PDF`} style={{ flex: 1, border: "none", width: "100%", background: "#525659" }} />
+          </div>
+        </div>
       )}
     </div>
   );

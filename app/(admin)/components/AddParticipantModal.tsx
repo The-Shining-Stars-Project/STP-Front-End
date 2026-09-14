@@ -43,6 +43,11 @@ type AddParticipantForm = {
   secondaryProgramId: string;
   intakeNotes: string;
   emergencyContacts: string[];
+  // Self-Determination Program. "" = not answered.
+  sdp: "" | "yes" | "no";
+  sdpFms: string;
+  sdpFacilitator: string;
+  sdpStartDate: string;
 };
 
 const EMPTY_FORM: AddParticipantForm = {
@@ -50,6 +55,7 @@ const EMPTY_FORM: AddParticipantForm = {
   guardianName: "", guardianPhone: "", guardianEmail: "", referralSource: "", tShirtSize: "", authExpiry: "",
   ippExpiry: "", allergies: "", anaphylactic: false, areasOfConcern: "", scEmail: "", scPhone: "", remind: "",
   intakeDocs: false, diploma: "", secondaryProgramId: "", intakeNotes: "", emergencyContacts: [""],
+  sdp: "", sdpFms: "", sdpFacilitator: "", sdpStartDate: "",
 };
 
 function toInitials(name: string): string {
@@ -103,6 +109,10 @@ export default function AddParticipantModal({
       secondaryProgramId: form.secondaryProgramId || undefined,
       intakeNotes: form.intakeNotes.trim() || undefined,
       emergencyContacts: cleanContacts(form.emergencyContacts),
+      isSdpClient: form.sdp === "" ? undefined : form.sdp === "yes",
+      sdpFmsName: form.sdp === "yes" ? form.sdpFms.trim() || undefined : undefined,
+      sdpIndependentFacilitator: form.sdp === "yes" ? form.sdpFacilitator.trim() || undefined : undefined,
+      sdpStartDate: form.sdp === "yes" ? form.sdpStartDate || undefined : undefined,
     };
 
     setSaving(true);
@@ -190,7 +200,7 @@ export default function AddParticipantModal({
           </div>
 
           <div>
-            <div className="ss-label" style={{ marginBottom: 6 }}>Service coordinator <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
+            <div className="ss-label" style={{ marginBottom: 6 }}>Service coordinator</div>
             <input type="text" placeholder="e.g. R. Alvarez" value={form.sc} onChange={(e) => setForm((f) => ({ ...f, sc: e.target.value }))} style={inputStyle} />
           </div>
 
@@ -205,8 +215,36 @@ export default function AddParticipantModal({
             </div>
           </div>
 
+          {/* Self-Determination Program */}
           <div style={{ borderTop: "0.5px solid var(--border)", paddingTop: "var(--space-3)" }}>
-            <div className="ss-label" style={{ marginBottom: 6 }}>Guardian name <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
+            <div className="ss-label" style={{ marginBottom: 8 }}>Is this an SDP client?</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button type="button" className={`ss-chip${form.sdp === "yes" ? " is-active" : ""}`} aria-pressed={form.sdp === "yes"} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, sdp: "yes" }))}>Yes</button>
+              <button type="button" className={`ss-chip${form.sdp === "no" ? " is-active" : ""}`} aria-pressed={form.sdp === "no"} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, sdp: "no" }))}>No</button>
+            </div>
+          </div>
+
+          {form.sdp === "yes" && (
+            <>
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div className="ss-label" style={{ marginBottom: 6 }}>FMS</div>
+                  <input type="text" placeholder="Financial Management Service" value={form.sdpFms} onChange={(e) => setForm((f) => ({ ...f, sdpFms: e.target.value }))} style={inputStyle} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div className="ss-label" style={{ marginBottom: 6 }}>Independent Facilitator</div>
+                  <input type="text" placeholder="Name" value={form.sdpFacilitator} onChange={(e) => setForm((f) => ({ ...f, sdpFacilitator: e.target.value }))} style={inputStyle} />
+                </div>
+              </div>
+              <div>
+                <div className="ss-label" style={{ marginBottom: 6 }}>SDP start date <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Always the first of the month</span></div>
+                <input type="date" value={form.sdpStartDate} onChange={(e) => setForm((f) => ({ ...f, sdpStartDate: e.target.value }))} style={{ ...inputStyle, width: "55%" }} />
+              </div>
+            </>
+          )}
+
+          <div style={{ borderTop: "0.5px solid var(--border)", paddingTop: "var(--space-3)" }}>
+            <div className="ss-label" style={{ marginBottom: 6 }}>Guardian name</div>
             <input type="text" placeholder="e.g. Maria Rivera" value={form.guardianName} onChange={(e) => setForm((f) => ({ ...f, guardianName: e.target.value }))} style={inputStyle} />
           </div>
 
@@ -222,7 +260,7 @@ export default function AddParticipantModal({
           </div>
 
           <div>
-            <div className="ss-label" style={{ marginBottom: 6 }}>Emergency contacts <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional — up to 5, name and phone together</span></div>
+            <div className="ss-label" style={{ marginBottom: 6 }}>Emergency contacts <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Up to 5 — name and phone together</span></div>
             <EmergencyContactsField value={form.emergencyContacts} onChange={(next) => setForm((f) => ({ ...f, emergencyContacts: next }))} inputStyle={inputStyle} />
           </div>
 
@@ -265,7 +303,7 @@ export default function AddParticipantModal({
           </div>
 
           <div>
-            <div className="ss-label" style={{ marginBottom: 6 }}>Contact in Remind <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
+            <div className="ss-label" style={{ marginBottom: 6 }}>Contact in Remind</div>
             <input type="text" placeholder="Who's set up, and when" value={form.remind} onChange={(e) => setForm((f) => ({ ...f, remind: e.target.value }))} style={inputStyle} />
           </div>
 
