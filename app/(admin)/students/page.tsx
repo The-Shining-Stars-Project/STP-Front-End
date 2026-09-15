@@ -31,6 +31,7 @@ import LoadError from "@/app/components/LoadError";
 import AddParticipantModal from "../components/AddParticipantModal";
 import ImportStarsModal from "../components/ImportStarsModal";
 import ProgramPills from "../components/ProgramPills";
+import { starDisplayName } from "@/lib/starName";
 import type {
   ParticipantSummaryDto,
   ProgramSummaryDto,
@@ -63,6 +64,7 @@ type Student = {
   id: string;
   init: string;
   nm: string;
+  preferred: string;
   birthYear: string;
   prog: string;
   progId: string;
@@ -153,6 +155,7 @@ function dtoToStudent(dto: ParticipantSummaryDto): Student {
     id: dto.id,
     init: dto.initials,
     nm: dto.fullName,
+    preferred: dto.preferredName ?? "",
     birthYear: dto.birthYear ? `b. ${dto.birthYear}` : "—",
     prog: dto.programSlug,
     progId: dto.programId,
@@ -193,9 +196,9 @@ const STARS_CSV_FILENAME = "stars.csv";
 /** Builds and downloads the CSV. Returns the number of DATA rows, for the audit report. */
 function exportCsv(rows: Student[]): number {
   const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
-  const header = ["Name", "DOB", "Birth year", "Program", "Also enrolled in", "Status", "Alerts", "Attendance %", "Service coordinator", "Started", "Guardian", "Guardian phone", "Guardian email", "Emergency contacts", "Referral source", "T-shirt size", "POS expiry", "IPP expiry", "Allergies (* = anaphylactic)"];
+  const header = ["Name", "Preferred name", "DOB", "Birth year", "Program", "Also enrolled in", "Status", "Alerts", "Attendance %", "Service coordinator", "Started", "Guardian", "Guardian phone", "Guardian email", "Emergency contacts", "Referral source", "T-shirt size", "POS expiry", "IPP expiry", "Allergies (* = anaphylactic)"];
   const lines = rows.map((s) =>
-    [s.nm, s.dob, s.birthYear, s.progName, s.secondaryProgName, STATUS_BADGE[s.status]?.label ?? s.status, s.alerts.join("; ") || "none", s.att, s.sc, s.startRaw, s.guardianName, s.guardianPhone, s.guardianEmail, s.emergencyContacts, s.referralSource, s.tShirtSize, s.authExpiry, s.ippExpiry, s.allergies]
+    [s.nm, s.preferred, s.dob, s.birthYear, s.progName, s.secondaryProgName, STATUS_BADGE[s.status]?.label ?? s.status, s.alerts.join("; ") || "none", s.att, s.sc, s.startRaw, s.guardianName, s.guardianPhone, s.guardianEmail, s.emergencyContacts, s.referralSource, s.tShirtSize, s.authExpiry, s.ippExpiry, s.allergies]
       .map(esc)
       .join(",")
   );
@@ -273,7 +276,7 @@ export default function StudentsPage() {
       if (statusTab !== "all" && d.status !== statusTab) return false;
       if (programFilter !== null && d.progId !== programFilter) return false;
       if (alertsOnly && d.alerts.length === 0) return false;
-      if (q && !d.nm.toLowerCase().includes(q) && !d.progName.toLowerCase().includes(q) && !d.sc.toLowerCase().includes(q)) return false;
+      if (q && !d.nm.toLowerCase().includes(q) && !d.preferred.toLowerCase().includes(q) && !d.progName.toLowerCase().includes(q) && !d.sc.toLowerCase().includes(q)) return false;
       return true;
     });
     const dir = sortDir === "asc" ? 1 : -1;
@@ -610,7 +613,7 @@ export default function StudentsPage() {
                         <button
                           type="button"
                           className={`chk${selected.has(d.id) ? " is-checked" : ""}`}
-                          aria-label={`Select ${d.nm}`}
+                          aria-label={`Select ${starDisplayName(d.nm, d.preferred)}`}
                           onClick={() => toggleRow(d.id)}
                         />
                       </td>
@@ -620,7 +623,9 @@ export default function StudentsPage() {
                             {d.init}
                           </span>
                           <div>
-                            <Link href={`/students/${d.id}`} className="nm" style={{ color: "inherit", textDecoration: "none" }}>{d.nm}</Link>
+                            <Link href={`/students/${d.id}`} className="nm" style={{ color: "inherit", textDecoration: "none" }}>
+                              {d.nm}{d.preferred && <span style={{ color: "var(--fg-tertiary)", fontWeight: 400 }}> ({d.preferred})</span>}
+                            </Link>
                             <div className="dob">{d.birthYear}</div>
                           </div>
                         </div>

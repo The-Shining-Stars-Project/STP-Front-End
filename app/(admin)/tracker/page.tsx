@@ -10,6 +10,7 @@ import { useAuth } from "@/lib/auth/AuthProvider";
 import { programTint } from "@/lib/programColor";
 import { Skeleton } from "../components/Skeleton";
 import ProgramPills from "../components/ProgramPills";
+import { starDisplayName } from "@/lib/starName";
 import StarStatusFilter, { DEFAULT_STAR_STATUS_FILTER, starStatusMatches, type StarStatusFilterValue } from "../components/StarStatusFilter";
 import type {
   ProgramSummaryDto,
@@ -324,6 +325,7 @@ export default function WeeklyDataPage() {
                 savingFocus={savingFocus}
                 onOpenEditor={() => openFocusEditor(g.program.id)}
                 onToggleDraft={toggleDraft}
+                onSetDraft={setFocusDraft}
                 onSaveFocus={saveFocus}
                 onCancelEditor={() => setEditingProgramId(null)}
               />
@@ -342,7 +344,7 @@ export default function WeeklyDataPage() {
 /** One program's block: its focus skills for the week, coverage, and the entry grid. */
 function ProgramSection({
   program, stars, week, weekFocus, scores, areas, onScore,
-  editing, editorDisabled, focusDraft, savingFocus, onOpenEditor, onToggleDraft, onSaveFocus, onCancelEditor,
+  editing, editorDisabled, focusDraft, savingFocus, onOpenEditor, onToggleDraft, onSetDraft, onSaveFocus, onCancelEditor,
 }: {
   program: ProgramSummaryDto;
   stars: ParticipantSummaryDto[];
@@ -357,6 +359,7 @@ function ProgramSection({
   savingFocus: boolean;
   onOpenEditor: () => void;
   onToggleDraft: (id: string) => void;
+  onSetDraft: (ids: Set<string>) => void;
   onSaveFocus: () => void;
   onCancelEditor: () => void;
 }) {
@@ -403,10 +406,40 @@ function ProgramSection({
       <div style={{ padding: "10px 12px", borderBottom: "0.5px solid var(--border)" }}>
         {editing ? (
           <>
+            {/* Every star gets a score on every skill each week (N/A counts), so picking the
+                18 one by one — and missing one — was the daily friction. One button selects
+                the whole framework; sections and single skills can still be unticked. */}
+            {(() => {
+              const allIds = sections.flatMap((a) => a.subSkills.map((sk) => sk.id));
+              const allOn = allIds.length > 0 && allIds.every((id) => focusDraft.has(id));
+              return (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: "var(--space-3)" }}>
+                  <button type="button" className="ss-btn ss-btn-primary" onClick={() => onSetDraft(new Set(allIds))} disabled={allOn}>
+                    <Check className="ss-btn-icon" />Score all {allIds.length} skills
+                  </button>
+                  <button type="button" className="ss-btn" onClick={() => onSetDraft(new Set())} disabled={focusDraft.size === 0}>
+                    <X className="ss-btn-icon" />Clear
+                  </button>
+                  <span style={{ fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)" }}>{focusDraft.size} of {allIds.length} selected — click a skill to untick it.</span>
+                </div>
+              );
+            })()}
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
               {sections.map((a) => (
                 <div key={a.id}>
-                  <div style={{ fontSize: "var(--fs-label)", letterSpacing: "var(--ls-label)", textTransform: "uppercase", color: `color-mix(in srgb, ${a.colorHex} 55%, var(--fg))`, marginBottom: 4 }}>{a.name}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: "var(--fs-label)", letterSpacing: "var(--ls-label)", textTransform: "uppercase", color: `color-mix(in srgb, ${a.colorHex} 55%, var(--fg))` }}>{a.name}</span>
+                    {(() => {
+                      const ids = a.subSkills.map((sk) => sk.id);
+                      const on = ids.every((id) => focusDraft.has(id));
+                      return (
+                        <button type="button" onClick={() => { const n = new Set(focusDraft); ids.forEach((id) => on ? n.delete(id) : n.add(id)); onSetDraft(n); }}
+                          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "var(--primary)", padding: 0 }}>
+                          {on ? "none" : "all"}
+                        </button>
+                      );
+                    })()}
+                  </div>
                   <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                     {a.subSkills.map((s) => {
                       const on = focusDraft.has(s.id);
@@ -492,7 +525,7 @@ function ProgramSection({
                   <td style={{ padding: "6px 12px", whiteSpace: "nowrap" }}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                       <span className="ss-avatar teacher sm">{p.initials}</span>
-                      <span style={{ fontSize: "var(--fs-body)" }}>{p.fullName}</span>
+                      <span style={{ fontSize: "var(--fs-body)" }}>{starDisplayName(p.fullName, p.preferredName)}</span>
                       {p.programId !== program.id && (
                         <span className="ss-meta" style={{ color: "var(--fg-tertiary)" }} title="Dual enrollment — primary program is elsewhere">also enrolled</span>
                       )}

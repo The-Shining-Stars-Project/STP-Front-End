@@ -28,7 +28,8 @@ import { participantsApi } from "@/lib/api/participants";
 import { ApiError } from "@/lib/api/client";
 import { usePrograms, queryKeys } from "@/lib/api/hooks";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import { sizeOptions } from "@/lib/tshirtSizes";
+import { starDisplayName } from "@/lib/starName";
+import TShirtSizeInput from "../components/TShirtSizeInput";
 import ProgramPills from "../components/ProgramPills";
 import { EmergencyContactsField, EmergencyContactsView, cleanContacts, draftFromContacts } from "../components/EmergencyContactsField";
 import ArtsProfileWidget from "./_arts_profile";
@@ -81,7 +82,7 @@ const inputStyle: React.CSSProperties = {
 };
 
 type Form = {
-  fullName: string; status: ParticipantStatus; programId: string; birthYear: string; sc: string;
+  fullName: string; preferredName: string; status: ParticipantStatus; programId: string; birthYear: string; sc: string;
   guardianName: string; guardianPhone: string; guardianEmail: string;
   referralSource: string; tShirtSize: string; authExpiry: string; intakeNotes: string;
   ippExpiry: string; dob: string; allergies: string; anaphylactic: boolean;
@@ -106,7 +107,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
 
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<Form>({
-    fullName: "", status: "Active", programId: "", birthYear: "", sc: "",
+    fullName: "", preferredName: "", status: "Active", programId: "", birthYear: "", sc: "",
     guardianName: "", guardianPhone: "", guardianEmail: "", referralSource: "", tShirtSize: "", authExpiry: "", intakeNotes: "",
     ippExpiry: "", dob: "", allergies: "", anaphylactic: false,
     areasOfConcern: "", scEmail: "", scPhone: "", remind: "", intakeDocs: false, diploma: "", secondaryProgramId: "",
@@ -135,6 +136,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
   function formFrom(d: ParticipantDetailDto): Form {
     return {
       fullName: d.fullName,
+      preferredName: d.preferredName ?? "",
       status: d.status,
       programId: d.programId,
       birthYear: d.birthYear != null ? String(d.birthYear) : "",
@@ -201,6 +203,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
     setError(null);
     const dto: UpdateParticipantDto = {
       fullName: form.fullName.trim(),
+      preferredName: form.preferredName.trim(),
       initials: toInitials(form.fullName),
       programId: form.programId,
       status: form.status,
@@ -331,7 +334,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
             <Link href="/students" style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: "var(--fg-tertiary)", textDecoration: "none", marginBottom: 2 }}>
               <ArrowLeft style={{ width: 13, height: 13 }} />Stars
             </Link>
-            <h1>{detail.fullName}</h1>
+            <h1>{starDisplayName(detail.fullName, detail.preferredName)}</h1>
           </div>
           <div className="right" style={{ display: "flex", gap: 8 }}>
             {editing ? (
@@ -385,7 +388,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
                 {detail.initials}
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 17, fontWeight: 500 }}>{detail.fullName}</div>
+                <div style={{ fontSize: 17, fontWeight: 500 }}>{starDisplayName(detail.fullName, detail.preferredName)}</div>
                 <div style={{ fontSize: 13, color: "var(--fg-secondary)", display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                   <span className={`ss-dot ${slug}`} />{detail.programName}
                 </div>
@@ -407,6 +410,12 @@ export default function ParticipantProfile({ id }: { id: string }) {
                 "Full name",
                 detail.fullName,
                 <input type="text" value={form.fullName} onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))} style={inputStyle} />
+              )}
+
+              {field(
+                "Preferred name",
+                detail.preferredName || "—",
+                <input type="text" value={form.preferredName} maxLength={100} placeholder="What they go by in class" onChange={(e) => setForm((f) => ({ ...f, preferredName: e.target.value }))} style={inputStyle} />
               )}
 
               {field(
@@ -532,10 +541,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
               {field(
                 "T-shirt size",
                 detail.tShirtSize || "—",
-                <select value={form.tShirtSize} onChange={(e) => setForm((f) => ({ ...f, tShirtSize: e.target.value }))} style={{ ...inputStyle, width: "60%" }}>
-                  <option value="">Not set</option>
-                  {sizeOptions(form.tShirtSize).map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
+                <TShirtSizeInput value={form.tShirtSize} onChange={(v) => setForm((f) => ({ ...f, tShirtSize: v }))} style={{ ...inputStyle, width: "60%" }} />
               )}
 
               {field(

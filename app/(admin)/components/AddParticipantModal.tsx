@@ -6,7 +6,7 @@ import { UserPlus, AlertCircle, X } from "lucide-react";
 import { participantsApi } from "@/lib/api/participants";
 import { ApiError } from "@/lib/api/client";
 import { queryKeys } from "@/lib/api/hooks";
-import { sizeOptions } from "@/lib/tshirtSizes";
+import TShirtSizeInput from "./TShirtSizeInput";
 import type {
   ProgramSummaryDto,
   CreateParticipantDto,
@@ -17,6 +17,7 @@ import { EmergencyContactsField, cleanContacts } from "./EmergencyContactsField"
 
 type AddParticipantForm = {
   nm: string;
+  preferredName: string;
   dob: string;
   /** yyyy-MM-dd; blank means "today" (the server default). */
   startDate: string;
@@ -51,7 +52,7 @@ type AddParticipantForm = {
 };
 
 const EMPTY_FORM: AddParticipantForm = {
-  nm: "", dob: "", startDate: "", programId: "", status: "prospective", sc: "",
+  nm: "", preferredName: "", dob: "", startDate: "", programId: "", status: "prospective", sc: "",
   guardianName: "", guardianPhone: "", guardianEmail: "", referralSource: "", tShirtSize: "", authExpiry: "",
   ippExpiry: "", allergies: "", anaphylactic: false, areasOfConcern: "", scEmail: "", scPhone: "", remind: "",
   intakeDocs: false, diploma: "", secondaryProgramId: "", intakeNotes: "", emergencyContacts: [""],
@@ -85,6 +86,7 @@ export default function AddParticipantModal({
     const statusMap: Record<string, ParticipantStatus> = { active: "Active", prospective: "Prospective", authpending: "AuthPending", inquiry: "Inquiry" };
     const dto: CreateParticipantDto = {
       fullName: form.nm.trim(),
+      preferredName: form.preferredName.trim() || undefined,
       initials: toInitials(form.nm),
       programId: form.programId,
       status: statusMap[form.status] ?? "Prospective",
@@ -152,9 +154,15 @@ export default function AddParticipantModal({
         </div>
 
         <div style={{ padding: "var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-4)", overflowY: "auto" }}>
-          <div>
-            <div className="ss-label" style={{ marginBottom: 6 }}>Full name <span style={{ color: "var(--danger)", fontWeight: 400 }}>*</span></div>
-            <input type="text" placeholder="e.g. Jordan Rivera" value={form.nm} onChange={(e) => setForm((f) => ({ ...f, nm: e.target.value }))} style={inputStyle} autoFocus />
+          <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ flex: 2 }}>
+              <div className="ss-label" style={{ marginBottom: 6 }}>Full name <span style={{ color: "var(--danger)", fontWeight: 400 }}>*</span></div>
+              <input type="text" placeholder="e.g. Jordan Rivera" value={form.nm} onChange={(e) => setForm((f) => ({ ...f, nm: e.target.value }))} style={inputStyle} autoFocus />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div className="ss-label" style={{ marginBottom: 6 }}>Preferred name</div>
+              <input type="text" placeholder="e.g. JJ" value={form.preferredName} maxLength={100} onChange={(e) => setForm((f) => ({ ...f, preferredName: e.target.value }))} style={inputStyle} />
+            </div>
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>
@@ -272,10 +280,7 @@ export default function AddParticipantModal({
           <div style={{ display: "flex", gap: 8 }}>
             <div style={{ flex: 1 }}>
               <div className="ss-label" style={{ marginBottom: 6 }}>T-shirt size</div>
-              <select value={form.tShirtSize} onChange={(e) => setForm((f) => ({ ...f, tShirtSize: e.target.value }))} style={inputStyle}>
-                <option value="">Not set</option>
-                {sizeOptions(form.tShirtSize).map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <TShirtSizeInput value={form.tShirtSize} onChange={(v) => setForm((f) => ({ ...f, tShirtSize: v }))} style={inputStyle} />
             </div>
             <div style={{ flex: 1 }}>
               <div className="ss-label" style={{ marginBottom: 6 }}>POS authorization expires</div>

@@ -285,6 +285,8 @@ export interface UpdateProgramDto {
 export interface ParticipantSummaryDto {
   id: Guid;
   fullName: string;
+  /** What the star goes by in class, when it differs from the full name. */
+  preferredName: string | null;
   initials: string;
   status: ParticipantStatus;
   programId: Guid;
@@ -582,6 +584,7 @@ export interface SetFocusSkillsDto {
 
 export interface CreateParticipantDto {
   fullName: string;
+  preferredName?: string;
   initials: string;
   programId: Guid;
   status?: ParticipantStatus;
@@ -616,6 +619,8 @@ export interface CreateParticipantDto {
 
 export interface UpdateParticipantDto {
   fullName?: string;
+  /** Empty string clears it; omit to leave unchanged. */
+  preferredName?: string;
   initials?: string;
   programId?: Guid;
   status?: ParticipantStatus;
