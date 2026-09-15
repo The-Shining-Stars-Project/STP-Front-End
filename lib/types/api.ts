@@ -695,6 +695,8 @@ export interface CreateStaffDto {
 }
 
 export interface ChecklistTemplateItemDto {
+  /** Stable id of an existing template row; send it back so a relabelled item stays the same item. */
+  id?: Guid | null;
   section: string;
   label: string;
   /** Renewal interval in months (TB 48, CPR 24, harassment 24); null for one-time items. */

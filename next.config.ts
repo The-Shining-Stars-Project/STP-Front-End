@@ -34,6 +34,10 @@ const csp = [
   // Dev needs the HMR websocket.
   `connect-src 'self'${isDev ? " ws: wss:" : ""}`,
   "object-src 'none'",
+  // The Scripts page shows a PDF in an <iframe> whose src is a blob: URL built from the
+  // authenticated download. Without this the iframe falls back to default-src 'self' and
+  // the browser blocks it — "Open in new tab" worked while the preview stayed blank.
+  "frame-src 'self' blob:",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",

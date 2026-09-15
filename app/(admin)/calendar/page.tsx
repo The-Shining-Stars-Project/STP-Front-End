@@ -35,6 +35,22 @@ function buildCells(year: number, month: number): Cell[] {
   return cells;
 }
 
+/** yyyy-MM-dd for a local calendar date. */
+function isoOf(year: number, month: number, day: number): string {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+function isoOfDate(d: Date): string { return isoOf(d.getFullYear(), d.getMonth() + 1, d.getDate()); }
+
+/** The seven days (Sunday first) of the week containing `anchorIso`. */
+function weekOf(anchorIso: string): { iso: string; date: Date }[] {
+  const a = parseLocalDate(anchorIso);
+  const start = new Date(a.getFullYear(), a.getMonth(), a.getDate() - a.getDay(), 12);
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i, 12);
+    return { iso: isoOfDate(d), date: d };
+  });
+}
+
 // ── Add Event Modal ───────────────────────────────────────────────────────────
 
 type EventForm = { title: string; date: string; programId: string; location: string; timeRange: string; details: string; siteIds: string[] };
@@ -236,24 +252,40 @@ export default function CalendarPage() {
 
   const [viewYear,  setViewYear]  = useState(today.year);
   const [viewMonth, setViewMonth] = useState(today.month);
+  // Week view: the week containing weekAnchor. Events for every month the week touches are
+  // loaded, so a week straddling a month boundary shows both halves.
+  const [viewMode, setViewMode] = useState<"month" | "week">("month");
+  const [weekAnchor, setWeekAnchor] = useState<string>(() => isoOf(today.year, today.month, today.day));
   const [events,    setEvents]    = useState<CalendarEventDto[]>([]);
   // Cached + shared via React Query (#34).
   const programs: ProgramSummaryDto[] = usePrograms().data ?? [];
   const sites: SiteDto[] = useReferenceLists().data?.sites ?? [];
   const { canManage } = useAuth();
   const [loading,   setLoading]   = useState(true);
-  const [selectedDay, setSelectedDay] = useState<number | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEventDto | null>(null);
 
-  // Reload events whenever the viewed month changes
+  const weekDays = useMemo(() => weekOf(weekAnchor), [weekAnchor]);
+
+  // Which months' events are needed: the viewed month, or every month the viewed week touches.
+  const monthsKey = useMemo(() => {
+    const pairs = viewMode === "month"
+      ? [`${viewYear}-${viewMonth}`]
+      : [...new Set(weekDays.map((d) => `${d.date.getFullYear()}-${d.date.getMonth() + 1}`))];
+    return pairs.join(",");
+  }, [viewMode, viewYear, viewMonth, weekDays]);
+
+  // Reload events whenever the months in view change
   useEffect(() => {
+    let active = true;
     setLoading(true);
-    calendarApi.getEvents(viewMonth, viewYear)
-      .then(setEvents)
-      .catch(() => setEvents([]))
-      .finally(() => setLoading(false));
-  }, [viewMonth, viewYear]);
+    const pairs = monthsKey.split(",").map((k) => { const [y, m] = k.split("-").map(Number); return { y, m }; });
+    Promise.all(pairs.map((p) => calendarApi.getEvents(p.m, p.y).catch(() => [] as CalendarEventDto[])))
+      .then((lists) => { if (active) setEvents(lists.flat()); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [monthsKey]);
 
   // programId → slug map for event coloring
   const programSlugMap = useMemo(
@@ -266,27 +298,37 @@ export default function CalendarPage() {
     return programSlugMap[e.programId] ?? "staff";
   }
 
-  // Group events by day-of-month
-  const eventsByDay = useMemo(() => {
+  // Group events by date (yyyy-MM-dd) — week view can hold two months at once.
+  const eventsByDate = useMemo(() => {
     return events.reduce((acc, e) => {
-      const d = parseLocalDate(e.date).getDate();
-      (acc[d] = acc[d] ?? []).push(e);
+      (acc[e.date] = acc[e.date] ?? []).push(e);
       return acc;
-    }, {} as Record<number, CalendarEventDto[]>);
+    }, {} as Record<string, CalendarEventDto[]>);
   }, [events]);
 
   const cells = useMemo(() => buildCells(viewYear, viewMonth), [viewYear, viewMonth]);
 
   const isCurrentMonth = viewYear === today.year && viewMonth === today.month;
 
+  function shiftWeek(days: number) {
+    const a = parseLocalDate(weekAnchor);
+    const next = new Date(a.getFullYear(), a.getMonth(), a.getDate() + days, 12);
+    setWeekAnchor(isoOfDate(next));
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth() + 1);
+    setSelectedDate(null);
+  }
+
   function prevMonth() {
-    setSelectedDay(null);
+    if (viewMode === "week") { shiftWeek(-7); return; }
+    setSelectedDate(null);
     if (viewMonth === 1) { setViewMonth(12); setViewYear(y => y - 1); }
     else setViewMonth(m => m - 1);
   }
 
   function nextMonth() {
-    setSelectedDay(null);
+    if (viewMode === "week") { shiftWeek(7); return; }
+    setSelectedDate(null);
     if (viewMonth === 12) { setViewMonth(1); setViewYear(y => y + 1); }
     else setViewMonth(m => m + 1);
   }
@@ -294,31 +336,57 @@ export default function CalendarPage() {
   function goToToday() {
     setViewYear(today.year);
     setViewMonth(today.month);
-    setSelectedDay(null);
+    setWeekAnchor(isoOf(today.year, today.month, today.day));
+    setSelectedDate(null);
   }
 
-  // Detail panel: show selected day, or today if in current month, otherwise nothing
-  const detailDay = selectedDay ?? (isCurrentMonth ? today.day : null);
-  const detailEvents = detailDay ? (eventsByDay[detailDay] ?? []) : [];
+  function switchMode(mode: "month" | "week") {
+    if (mode === viewMode) return;
+    if (mode === "week") {
+      // Start on the selected day, else today when it is in view, else the 1st.
+      setWeekAnchor(selectedDate ?? (isCurrentMonth ? isoOf(today.year, today.month, today.day) : isoOf(viewYear, viewMonth, 1)));
+    } else {
+      const a = parseLocalDate(weekAnchor);
+      setViewYear(a.getFullYear());
+      setViewMonth(a.getMonth() + 1);
+    }
+    setViewMode(mode);
+  }
 
-  const detailLabel = detailDay
-    ? new Date(viewYear, viewMonth - 1, detailDay).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
+  const todayIso = isoOf(today.year, today.month, today.day);
+  const weekHasToday = weekDays.some((d) => d.iso === todayIso);
+
+  // Detail panel: the selected day; else today when it is in view; else (week view) the
+  // first day of the week.
+  const detailDate: string | null = selectedDate
+    ?? (viewMode === "month"
+      ? (isCurrentMonth ? todayIso : null)
+      : (weekHasToday ? todayIso : weekDays[0].iso));
+  const detailEvents = detailDate ? (eventsByDate[detailDate] ?? []) : [];
+
+  const detailLabel = detailDate
+    ? parseLocalDate(detailDate).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
     : `${MONTH_NAMES[viewMonth - 1]} ${viewYear}`;
 
-  // Other events this month (excluding the selected day so they don't duplicate)
+  const weekLabel = (() => {
+    const a = weekDays[0].date, b = weekDays[6].date;
+    const left = a.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const right = b.toLocaleDateString("en-US", a.getMonth() === b.getMonth() ? { day: "numeric" } : { month: "short", day: "numeric" });
+    return `${left} – ${right}, ${b.getFullYear()}`;
+  })();
+
+  // Other events in view (excluding the detail day so they don't duplicate)
   const otherEvents = useMemo(() => {
-    return events
-      .filter(e => {
-        const d = parseLocalDate(e.date).getDate();
-        return detailDay === null || d !== detailDay;
-      })
+    const inView = viewMode === "month"
+      ? events.filter((e) => { const d = parseLocalDate(e.date); return d.getMonth() + 1 === viewMonth && d.getFullYear() === viewYear; })
+      : events.filter((e) => weekDays.some((d) => d.iso === e.date));
+    return inView
+      .filter(e => detailDate === null || e.date !== detailDate)
       .sort((a, b) => a.date.localeCompare(b.date))
       .slice(0, 5);
-  }, [events, detailDay]);
+  }, [events, detailDate, viewMode, viewMonth, viewYear, weekDays]);
 
-  const defaultDate = detailDay
-    ? `${viewYear}-${String(viewMonth).padStart(2, "0")}-${String(detailDay).padStart(2, "0")}`
-    : `${viewYear}-${String(viewMonth).padStart(2, "0")}-01`;
+  const defaultDate = detailDate ?? isoOf(viewYear, viewMonth, 1);
 
   return (
     <>
@@ -335,8 +403,8 @@ export default function CalendarPage() {
           </div>
           <div className="right">
             <div className="seg">
-              <button className="is-active">Month</button>
-              <button>Week</button>
+              <button type="button" className={viewMode === "month" ? "is-active" : ""} onClick={() => switchMode("month")}>Month</button>
+              <button type="button" className={viewMode === "week" ? "is-active" : ""} onClick={() => switchMode("week")}>Week</button>
             </div>
             {canManage && <button className="ss-btn ss-btn-primary" type="button" onClick={() => setAddOpen(true)}>
               <Plus className="ss-btn-icon" />
@@ -369,13 +437,45 @@ export default function CalendarPage() {
               <div className="cal-nav">
                 <span className="arrow" onClick={prevMonth}><ChevronLeft /></span>
                 <span className="arrow" onClick={nextMonth}><ChevronRight /></span>
-                <span className="month">{MONTH_NAMES[viewMonth - 1]} {viewYear}</span>
+                <span className="month">{viewMode === "week" ? weekLabel : `${MONTH_NAMES[viewMonth - 1]} ${viewYear}`}</span>
                 <button className="ss-btn" type="button" onClick={goToToday}
                   style={{ marginLeft: 8, height: 32, minHeight: 32, padding: "0 14px" }}>
                   Today
                 </button>
               </div>
 
+              {viewMode === "week" ? (
+                <div className="cal-grid">
+                  <div className="cal-dow">
+                    {weekDays.map((d) => (
+                      <div key={d.iso}>{DOW[d.date.getDay()]} {d.date.getDate()}</div>
+                    ))}
+                  </div>
+                  <div className="cal-weeks" style={{ opacity: loading ? 0.4 : 1, transition: "opacity 200ms" }}>
+                    {weekDays.map((d) => {
+                      const isToday = d.iso === todayIso;
+                      const isSelected = d.iso === selectedDate;
+                      const evs = eventsByDate[d.iso] ?? [];
+                      return (
+                        <div
+                          key={d.iso}
+                          className={`cal-cell${isToday ? " is-today" : ""}${isSelected ? " is-selected" : ""}`}
+                          style={{ minHeight: 220 }}
+                          onClick={() => setSelectedDate(d.iso === selectedDate ? null : d.iso)}
+                        >
+                          <span className="dnum">{d.date.getDate()}</span>
+                          {evs.map((e) => (
+                            <span key={e.id} className={`evt ${slugFor(e)}`} title={e.title} style={{ whiteSpace: "normal" }}>
+                              {e.timeRange ? `${e.timeRange} · ` : ""}{e.title}
+                            </span>
+                          ))}
+                          {evs.length === 0 && <span style={{ fontSize: 11, color: "var(--fg-tertiary)" }}>—</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
               <div className="cal-grid">
                 <div className="cal-dow">
                   {DOW.map(d => <div key={d}>{d}</div>)}
@@ -383,16 +483,17 @@ export default function CalendarPage() {
                 <div className="cal-weeks" style={{ opacity: loading ? 0.4 : 1, transition: "opacity 200ms" }}>
                   {cells.map((c, idx) => {
                     const isOther    = c.slot !== "curr";
-                    const isToday    = isCurrentMonth && !isOther && c.d === today.day;
-                    const isSelected = !isOther && c.d === selectedDay;
-                    const evs  = !isOther ? (eventsByDay[c.d] ?? []) : [];
+                    const iso        = isOther ? null : isoOf(viewYear, viewMonth, c.d);
+                    const isToday    = iso === todayIso;
+                    const isSelected = iso !== null && iso === selectedDate;
+                    const evs  = iso ? (eventsByDate[iso] ?? []) : [];
                     const shown = evs.slice(0, 3);
                     const extra = evs.length - shown.length;
                     return (
                       <div
                         key={idx}
                         className={`cal-cell${isOther ? " is-other" : ""}${isToday ? " is-today" : ""}${isSelected ? " is-selected" : ""}`}
-                        onClick={() => { if (!isOther) setSelectedDay(c.d === selectedDay ? null : c.d); }}
+                        onClick={() => { if (iso) setSelectedDate(iso === selectedDate ? null : iso); }}
                       >
                         <span className="dnum">{c.d}</span>
                         {shown.map((e, i) => (
@@ -404,6 +505,7 @@ export default function CalendarPage() {
                   })}
                 </div>
               </div>
+              )}
             </div>
 
             {/* ── Detail panel ─────────────────────────────────────────── */}
@@ -412,7 +514,7 @@ export default function CalendarPage() {
                 <div className="detail-h">{detailLabel}</div>
                 {detailEvents.length === 0 ? (
                   <div style={{ padding: "10px 0", fontSize: 13, color: "var(--fg-tertiary)" }}>
-                    {detailDay ? "No events this day" : "Click a day to see its events"}
+                    {detailDate ? "No events this day" : "Click a day to see its events"}
                   </div>
                 ) : detailEvents.map(e => (
                   <div key={e.id} className="evt-card">
@@ -441,7 +543,7 @@ export default function CalendarPage() {
 
               {otherEvents.length > 0 && (
                 <div className="section">
-                  <div className="detail-h">{isCurrentMonth ? "Upcoming" : MONTH_NAMES[viewMonth - 1]}</div>
+                  <div className="detail-h">{viewMode === "week" ? "This week" : isCurrentMonth ? "Upcoming" : MONTH_NAMES[viewMonth - 1]}</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
                     {otherEvents.map(e => {
                       const label = parseLocalDate(e.date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -475,7 +577,9 @@ export default function CalendarPage() {
           onClose={() => { setAddOpen(false); setEditingEvent(null); }}
           onSaved={(e) => {
             const eDate = parseLocalDate(e.date);
-            const inView = eDate.getMonth() + 1 === viewMonth && eDate.getFullYear() === viewYear;
+            const inView = viewMode === "week"
+              ? weekDays.some((d) => d.iso === e.date)
+              : eDate.getMonth() + 1 === viewMonth && eDate.getFullYear() === viewYear;
             setEvents((prev) => {
               const rest = prev.filter((x) => x.id !== e.id);
               return inView ? [...rest, e] : rest;

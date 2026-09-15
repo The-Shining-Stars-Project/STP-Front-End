@@ -23,40 +23,40 @@ import { programPillStyle, programTint } from "@/lib/programColor";
 
 // ── Checklist Template ────────────────────────────────────────────────────────
 
-export type TemplateItem = { id: string; label: string; renewalMonths: number | null };
+export type TemplateItem = { id: string; label: string; renewalMonths: number | null; templateId: string | null };
 export type TemplateSection = { name: string; items: TemplateItem[] };
 
 export const DEFAULT_TEMPLATE: TemplateSection[] = [
   {
     name: "HR & Compliance",
     items: [
-      { id: "t1", label: "W-4 / I-9 completed", renewalMonths: null },
-      { id: "t2", label: "Background check cleared", renewalMonths: null },
-      { id: "t3", label: "Emergency contact form submitted", renewalMonths: null },
+      { id: "t1", label: "W-4 / I-9 completed", renewalMonths: null, templateId: null },
+      { id: "t2", label: "Background check cleared", renewalMonths: null, templateId: null },
+      { id: "t3", label: "Emergency contact form submitted", renewalMonths: null, templateId: null },
     ],
   },
   {
     name: "Training",
     items: [
-      { id: "t4", label: "Program overview training", renewalMonths: null },
-      { id: "t5", label: "Child safety & mandated reporter training", renewalMonths: null },
-      { id: "t6", label: "First aid / CPR certification", renewalMonths: 24 },
+      { id: "t4", label: "Program overview training", renewalMonths: null, templateId: null },
+      { id: "t5", label: "Child safety & mandated reporter training", renewalMonths: null, templateId: null },
+      { id: "t6", label: "First aid / CPR certification", renewalMonths: 24, templateId: null },
     ],
   },
   {
     name: "Program Requirements",
     items: [
-      { id: "t7", label: "Liability waiver signed", renewalMonths: null },
-      { id: "t8", label: "Code of conduct acknowledged", renewalMonths: null },
-      { id: "t9", label: "Media release policy reviewed", renewalMonths: null },
+      { id: "t7", label: "Liability waiver signed", renewalMonths: null, templateId: null },
+      { id: "t8", label: "Code of conduct acknowledged", renewalMonths: null, templateId: null },
+      { id: "t9", label: "Media release policy reviewed", renewalMonths: null, templateId: null },
     ],
   },
   {
     name: "Access & Setup",
     items: [
-      { id: "t10", label: "Staff email account created", renewalMonths: null },
-      { id: "t11", label: "Program schedule provided", renewalMonths: null },
-      { id: "t12", label: "Star roster access granted", renewalMonths: null },
+      { id: "t10", label: "Staff email account created", renewalMonths: null, templateId: null },
+      { id: "t11", label: "Program schedule provided", renewalMonths: null, templateId: null },
+      { id: "t12", label: "Star roster access granted", renewalMonths: null, templateId: null },
     ],
   },
 ];
@@ -105,7 +105,7 @@ export function EditChecklistModal({
   }
   function addItem(si: number) {
     setDraft((d) => d.map((s, i) =>
-      i !== si ? s : { ...s, items: [...s.items, { id: uid(), label: "", renewalMonths: null }] }
+      i !== si ? s : { ...s, items: [...s.items, { id: uid(), label: "", renewalMonths: null, templateId: null }] }
     ));
   }
 

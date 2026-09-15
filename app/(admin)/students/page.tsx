@@ -106,8 +106,9 @@ type ViewState = {
   rowsPerPage: number;
 };
 
+// Active stars by default (client ask, Sep 2026); the tabs widen it.
 const DEFAULT_VIEW: ViewState = {
-  statusTab: "all", programFilter: null, alertsOnly: false, query: "",
+  statusTab: "active", programFilter: null, alertsOnly: false, query: "",
   sortKey: "name", sortDir: "asc", page: 1, rowsPerPage: 10,
 };
 

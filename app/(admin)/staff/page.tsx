@@ -98,7 +98,7 @@ function templateToSections(items: ChecklistTemplateItemDto[]): TemplateSection[
   items.forEach((item, i) => {
     let sec = sections.find((s) => s.name === item.section);
     if (!sec) { sec = { name: item.section, items: [] }; sections.push(sec); }
-    sec.items.push({ id: `t${i}`, label: item.label, renewalMonths: item.renewalMonths ?? null });
+    sec.items.push({ id: item.id ?? `t${i}`, label: item.label, renewalMonths: item.renewalMonths ?? null, templateId: item.id ?? null });
   });
   return sections;
 }
@@ -107,7 +107,7 @@ function sectionsToTemplate(sections: TemplateSection[]): ChecklistTemplateItemD
   return sections.flatMap((s) =>
     s.items
       .filter((i) => i.label.trim().length > 0)
-      .map((i) => ({ section: s.name.trim() || "General", label: i.label.trim(), renewalMonths: i.renewalMonths }))
+      .map((i) => ({ id: i.templateId ?? undefined, section: s.name.trim() || "General", label: i.label.trim(), renewalMonths: i.renewalMonths }))
   );
 }
 
