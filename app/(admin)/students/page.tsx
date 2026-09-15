@@ -481,6 +481,22 @@ export default function StudentsPage() {
 
         {/* filter bar */}
         <div className="filter-bar">
+          {/* Status filter on the table itself (client ask): Active by default, Former and
+              the rest a pick away. Bound to the same state as the tiles above. */}
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--fg-tertiary)" }}>
+            Status
+            <select
+              value={statusTab}
+              onChange={(e) => setTab(e.target.value as StatusTab)}
+              aria-label="Filter stars by status"
+              style={{ border: "0.5px solid var(--border-hover)", borderRadius: "var(--r-md)", padding: "6px 8px", fontSize: 12, color: "var(--fg)", background: "var(--surface)", outline: "none" }}
+            >
+              {TAB_DEFS.map((t) => (
+                <option key={t.key} value={t.key}>{t.key === "all" ? "All statuses" : t.label} ({t.count})</option>
+              ))}
+            </select>
+          </label>
+          <span className="sep" />
           <ProgramPills programs={programs} value={programFilter} onChange={setProg} allLabel="All" compact />
           <span className="sep" />
           <button
