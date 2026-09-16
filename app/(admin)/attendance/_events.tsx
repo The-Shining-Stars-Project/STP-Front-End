@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarDays, Check, Plus, Search, Users, X } from "lucide-react";
+import { CalendarDays, Check, Plus, Search, Users, X, RotateCcw, Trash2 } from "lucide-react";
 import { eventsApi } from "@/lib/api/events";
 import { useReferenceLists } from "@/lib/api/hooks";
-import { ApiError } from "@/lib/api/client";
+import { ApiError, describeApiError } from "@/lib/api/client";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import EmptyState from "../components/EmptyState";
 import type {
@@ -45,6 +46,7 @@ const CATEGORIES: { value: EventCategory; label: string }[] = [
 ];
 
 export default function EventsPanel({ canManage }: { canManage: boolean }) {
+  const { isAdmin } = useAuth();
   const sites: SiteDto[] = useReferenceLists().data?.sites ?? [];
 
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
@@ -76,7 +78,7 @@ export default function EventsPanel({ canManage }: { canManage: boolean }) {
   }
 
   function fail(e: unknown, fallback: string) {
-    setError(e instanceof ApiError && e.detail ? e.detail : fallback);
+    setError(describeApiError(e, fallback));
   }
 
   async function mark(recordId: string, status: AttendanceStatus, siteId: string | null) {
@@ -104,6 +106,29 @@ export default function EventsPanel({ canManage }: { canManage: boolean }) {
     } catch (e) { fail(e, "Couldn't submit this event."); }
   }
 
+  // "Hit submit too early": management can reopen, fix marks, and submit again.
+  async function reopen() {
+    if (!selected) return;
+    try {
+      await eventsApi.reopen(selected.event.id);
+      openEvent(selected.event.id);
+      loadEvents();
+    } catch (e) { fail(e, "Couldn't reopen this event."); }
+  }
+
+  // Two-click delete for an event that should not exist. Admin only; erases its marks.
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  async function deleteEvent() {
+    if (!selected) return;
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    try {
+      await eventsApi.remove(selected.event.id);
+      setConfirmDelete(false);
+      setSelected(null);
+      loadEvents();
+    } catch (e) { setConfirmDelete(false); fail(e, "Couldn't delete this event."); }
+  }
+
   async function removeStar(participantId: string) {
     if (!selected) return;
     try {
@@ -121,7 +146,7 @@ export default function EventsPanel({ canManage }: { canManage: boolean }) {
         {error && <ErrorBar text={error} onClose={() => setError(null)} />}
 
         <button type="button" className="ss-btn" style={{ marginBottom: "var(--space-3)" }}
-          onClick={() => { setSelected(null); loadEvents(); }}>
+          onClick={() => { setSelected(null); setConfirmDelete(false); loadEvents(); }}>
           ← All events
         </button>
 
@@ -147,6 +172,18 @@ export default function EventsPanel({ canManage }: { canManage: boolean }) {
                 </>
               )}
               {locked && <span className="ss-chip is-active">Submitted</span>}
+              {locked && canManage && (
+                <button type="button" className="ss-btn" onClick={reopen} title="Reopen to correct attendance, then submit again">
+                  <RotateCcw className="ss-btn-icon" />Reopen
+                </button>
+              )}
+              {isAdmin && (
+                <button type="button" className="ss-btn" onClick={deleteEvent}
+                  title="Delete this event and its attendance marks"
+                  style={confirmDelete ? { background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" } : { color: "var(--danger)" }}>
+                  <Trash2 className="ss-btn-icon" />{confirmDelete ? "Confirm delete" : "Delete event"}
+                </button>
+              )}
             </span>
           </div>
 

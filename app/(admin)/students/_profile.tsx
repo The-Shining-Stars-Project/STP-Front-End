@@ -25,7 +25,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { participantsApi } from "@/lib/api/participants";
-import { ApiError } from "@/lib/api/client";
+import { ApiError, describeApiError } from "@/lib/api/client";
 import { usePrograms, queryKeys } from "@/lib/api/hooks";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { starDisplayName } from "@/lib/starName";
@@ -186,7 +186,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
       setNotesEditing(false);
       queryClient.invalidateQueries({ queryKey: queryKeys.participants });
     } catch (err) {
-      setError(err instanceof ApiError && err.detail ? err.detail : "Could not save the notes — try again.");
+      setError(describeApiError(err, "Could not save the notes — try again."));
     } finally {
       setNotesSaving(false);
     }
@@ -249,7 +249,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
     } catch (err) {
       // Prefer the server's reason (a validation limit reads better than "could not save").
-      setError(err instanceof ApiError && err.detail ? err.detail : "Could not save changes — make sure the backend is running and try again.");
+      setError(describeApiError(err, "Could not save changes — try again."));
     } finally {
       setSaving(false);
     }
@@ -272,7 +272,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
       setDeleteOpen(false);
       setError(err instanceof ApiError && err.status === 403
         ? "Only an admin can remove a star."
-        : "Could not remove this star — try again.");
+        : describeApiError(err, "Could not remove this star — try again."));
     }
   }
 

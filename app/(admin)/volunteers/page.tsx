@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { UserPlus, Search, X, Check, AlertCircle, Pencil, CheckCircle2, MinusCircle, Loader2, Trash2 } from "lucide-react";
 import { useVolunteers, usePrograms, queryKeys } from "@/lib/api/hooks";
 import { volunteersApi } from "@/lib/api/volunteers";
-import { ApiError } from "@/lib/api/client";
+import { ApiError, describeApiError } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import LoadError from "@/app/components/LoadError";
 import { Skeleton } from "../components/Skeleton";
@@ -99,6 +99,7 @@ export default function VolunteersPage() {
                   <th>Email</th>
                   <th>Status</th>
                   <th>Started</th>
+                  <th>Notes</th>
                   <th style={{ width: 44 }} />
                 </tr>
               </thead>
@@ -112,18 +113,19 @@ export default function VolunteersPage() {
                       <td><Skeleton w={110} h={11} /></td>
                       <td><Skeleton w={60} h={18} r={10} /></td>
                       <td><Skeleton w={60} h={11} /></td>
+                      <td><Skeleton w={120} h={11} /></td>
                       <td />
                     </tr>
                   ))
                 ) : volunteersQ.isError ? (
                   <tr>
-                    <td colSpan={7}>
+                    <td colSpan={8}>
                       <LoadError title="Couldn't load volunteers" error={volunteersQ.error} onRetry={() => volunteersQ.refetch()} />
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={7} style={{ textAlign: "center", padding: "40px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>
+                    <td colSpan={8} style={{ textAlign: "center", padding: "40px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>
                       {data.length === 0 ? "No volunteers yet — add one to get started." : "No volunteers match the current filters."}
                     </td>
                   </tr>
@@ -151,6 +153,11 @@ export default function VolunteersPage() {
                       </span>
                     </td>
                     <td className="ss-meta">{v.startDate}</td>
+                    <td className="ss-meta" style={{ maxWidth: 280 }}>
+                      {v.notes
+                        ? <span title={v.notes} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.notes}</span>
+                        : <span style={{ color: "var(--fg-tertiary)" }}>—</span>}
+                    </td>
                     <td>
                       <button type="button" title="Edit volunteer" onClick={() => { setEditing(v); setModalOpen(true); }}
                         style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4, display: "inline-flex" }}>
@@ -214,7 +221,7 @@ function VolunteerModal({
     } catch (err) {
       setError(err instanceof ApiError && err.status === 403
         ? "Only an admin can remove a volunteer."
-        : "Could not remove this volunteer — try again.");
+        : describeApiError(err, "Could not remove this volunteer — try again."));
       setDeleting(false);
       setConfirmDelete(false);
     }
@@ -247,7 +254,7 @@ function VolunteerModal({
       queryClient.invalidateQueries({ queryKey: queryKeys.volunteers });
       onClose();
     } catch (err) {
-      setError(err instanceof ApiError && err.detail ? err.detail : "Could not save volunteer — check that the backend is running and try again.");
+      setError(describeApiError(err, "Could not save volunteer — try again."));
       setSaving(false);
     }
   }

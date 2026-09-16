@@ -31,4 +31,8 @@ export const eventsApi = {
   updateRecord: (recordId: Guid, dto: UpdateEventRecordDto) =>
     api.put<void>(`/api/events/records/${recordId}`, dto),
   submit: (id: Guid) => api.post<EventSessionSummaryDto>(`/api/events/${id}/submit`, {}),
+  /** Puts a submitted register back to Open so marks can be corrected (management). */
+  reopen: (id: Guid) => api.post<EventSessionSummaryDto>(`/api/events/${id}/reopen`, {}),
+  /** Deletes the event and its marks (admin). */
+  remove: (id: Guid) => api.delete<void>(`/api/events/${id}`),
 };

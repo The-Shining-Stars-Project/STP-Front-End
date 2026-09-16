@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { describeApiError } from "@/lib/api/client";
 import { Sparkles, Pencil, Check, Loader2 } from "lucide-react";
 import { participantsApi } from "@/lib/api/participants";
 import type { ParticipantArtsProfileDto, UpsertArtsProfileDto } from "@/lib/types/api";
@@ -61,8 +62,8 @@ export default function ArtsProfileWidget({ participantId }: { participantId: st
       setProfile(saved);
       setForm(formFrom(saved));
       setEditing(false);
-    } catch {
-      setError("Couldn't save the arts profile — check the API and try again.");
+    } catch (err) {
+      setError(describeApiError(err, "Couldn't save the arts profile — try again."));
     } finally {
       setSaving(false);
     }

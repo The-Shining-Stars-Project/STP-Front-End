@@ -219,3 +219,20 @@ export const api = {
   /** GET a file as a Blob, with the server's suggested file name. */
   file: (path: string) => apiFetchFile(path),
 };
+
+/**
+ * One sentence for a failed call, for the modals and widgets to show. The server's own
+ * reason when it sent one; otherwise a message that distinguishes "the API is restarting
+ * after a release" (the 502/503/timeouts users saw as "check the backend") from a real
+ * failure, and a permission refusal from both.
+ */
+export function describeApiError(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    if (err.detail) return err.detail;
+    if (err.status === 403) return "You don't have permission to do that.";
+    if (err.status === 0 || err.status === 502 || err.status === 503 || err.status === 504)
+      return "The server is restarting after an update. Wait a minute or two and try again.";
+    if (err.status === 404) return "That record no longer exists — refresh the page.";
+  }
+  return fallback;
+}
