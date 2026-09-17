@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, Suspense } from "react";
-import { staffRoleLabel } from "@/lib/staffRoles";
+import { staffRoleLabel, staffRoleAvatarClass } from "@/lib/staffRoles";
 import { useSearchParams } from "next/navigation";
 import { parseLocalDate } from "@/lib/format";
 import { useQueryClient } from "@tanstack/react-query";
@@ -28,6 +28,7 @@ import LoadError from "@/app/components/LoadError";
 import { ApiError } from "@/lib/api/client";
 import {
   AddStaffModal,
+  EditStaffModal,
   EditChecklistModal,
   DEFAULT_TEMPLATE,
   type TemplateSection,
@@ -37,6 +38,7 @@ import {
 import type {
   StaffSummaryDto,
   StaffDetailDto,
+  UpdateStaffDto,
   ProgramSummaryDto,
   CreateStaffDto,
   StaffRole,
@@ -139,14 +141,16 @@ function StaffPageInner() {
   // "auto" = expand the deep-linked row, else the first in-progress onboarding
   // once data arrives; explicit values take over as soon as the user toggles.
   const [expandedRaw, setExpandedRaw] = useState<string | null | "auto">("auto");
+  // Rows are keyed by id, not name: two records can share a name (a duplicate hire, or a
+  // rehire). The ?expand= link still names the person and resolves to the first match.
   const expanded = expandedRaw === "auto"
-    ? (expandParam && staffList.some((s) => s.fullName === expandParam) ? expandParam : null)
-      ?? staffList.find((s) => s.onboardingProgressPct > 0 && s.onboardingProgressPct < 100)?.fullName ?? null
+    ? (expandParam ? staffList.find((s) => s.fullName === expandParam)?.id ?? null : null)
+      ?? staffList.find((s) => s.onboardingProgressPct > 0 && s.onboardingProgressPct < 100)?.id ?? null
     : expandedRaw;
   const [detailCache, setDetailCache] = useState<Record<string, StaffDetailDto>>({});
 
   // Whatever row is expanded needs its checklist detail loaded.
-  const expandedStaff = staffList.find((s) => s.fullName === expanded);
+  const expandedStaff = staffList.find((s) => s.id === expanded);
   useEffect(() => {
     const s = expandedStaff;
     if (!s || detailCache[s.id]) return;
@@ -163,6 +167,7 @@ function StaffPageInner() {
   // Active vs former staff — former members keep their checklist history.
   const [view, setView] = useState<"active" | "former">("active");
   const [statusSavingId, setStatusSavingId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<StaffSummaryDto | null>(null);
   // Item ids with an in-flight toggle request, so a double-click can't race.
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
 
@@ -173,9 +178,9 @@ function StaffPageInner() {
     ? templateToSections(templateQ.data)
     : DEFAULT_TEMPLATE;
 
-  function handleToggle(_id: string, name: string) {
+  function handleToggle(id: string) {
     // The effect above loads the checklist detail for whichever row is expanded.
-    setExpandedRaw(expanded === name ? null : name);
+    setExpandedRaw(expanded === id ? null : id);
   }
 
   function openModal() { setForm(EMPTY_STAFF_FORM); setModalOpen(true); }
@@ -321,7 +326,7 @@ function StaffPageInner() {
       // The response carries the checklist just issued from the template —
       // cache it and expand the new member so their checklist is visible.
       setDetailCache((prev) => ({ ...prev, [created.id]: created }));
-      setExpandedRaw(created.fullName);
+      setExpandedRaw(created.id);
       setFilter("all");
       queryClient.invalidateQueries({ queryKey: queryKeys.staff, exact: true });
     } catch (e) {
@@ -393,6 +398,16 @@ function StaffPageInner() {
       setSaveError(e instanceof ApiError && e.detail ? e.detail : "Couldn't update the staff member's status — try again.");
     } finally {
       setStatusSavingId(null);
+    }
+  }
+
+  async function handleEditSave(s: StaffSummaryDto, dto: UpdateStaffDto) {
+    try {
+      const updated = await staffApi.update(s.id, dto);
+      setDetailCache((prev) => ({ ...prev, [s.id]: updated }));
+      queryClient.invalidateQueries({ queryKey: queryKeys.staff, exact: true });
+    } catch (e) {
+      throw new Error(e instanceof ApiError && e.detail ? e.detail : "Couldn't save the changes — try again.");
     }
   }
 
@@ -549,7 +564,7 @@ function StaffPageInner() {
                   {year} · {rows.length} staff member{rows.length === 1 ? "" : "s"}
                 </div>
                 {rows.map((s) => {
-              const isExpanded = expanded === s.fullName;
+              const isExpanded = expanded === s.id;
               const pct = s.onboardingProgressPct;
               const barCls = progressBarCls(pct);
               const hireLabel = buildHireLabel(s.startDate);
@@ -569,8 +584,8 @@ function StaffPageInner() {
 
               return (
                 <div key={s.id} className={`sacc${isExpanded ? "" : " is-collapsed"}`}>
-                  <div className="sacc-head" onClick={() => handleToggle(s.id, s.fullName)}>
-                    <span className={`ss-avatar ${s.role.toLowerCase()}`}>{s.initials}</span>
+                  <div className="sacc-head" onClick={() => handleToggle(s.id)}>
+                    <span className={`ss-avatar ${staffRoleAvatarClass(s.role)}`}>{s.initials}</span>
                     <div className="sacc-id" style={{ display: "block" }}>
                       <div className="nm">
                         {s.fullName}
@@ -723,7 +738,10 @@ function StaffPageInner() {
                           Loading checklist…
                         </div>
                       )}
-                      <div style={{ padding: "10px 16px", borderTop: "0.5px solid var(--border)", display: "flex", justifyContent: "flex-end" }}>
+                      <div style={{ padding: "10px 16px", borderTop: "0.5px solid var(--border)", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                        <button className="ss-btn" type="button" onClick={() => setEditing(s)}>
+                          <Pencil className="ss-btn-icon" />Edit details
+                        </button>
                         <button
                           className="ss-btn"
                           type="button"
@@ -813,6 +831,15 @@ function StaffPageInner() {
 
       {modalOpen && (
         <AddStaffModal programs={programs} form={form} setForm={setForm} onClose={closeModal} onSubmit={handleSubmit} />
+      )}
+
+      {editing && (
+        <EditStaffModal
+          key={editing.id}
+          member={editing}
+          onClose={() => setEditing(null)}
+          onSave={(dto) => handleEditSave(editing, dto)}
+        />
       )}
 
       {templateOpen && (

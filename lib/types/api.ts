@@ -5,7 +5,7 @@ export type Guid = string;
 // ── Enums (mirror backend) ────────────────────────────────────────────────────
 
 export type ParticipantStatus = "Active" | "Prospective" | "Attention" | "Former" | "AuthPending" | "Inquiry" | "NotInterested";
-export type StaffRole = "Teacher" | "TeacherAssistant" | "Coordinator" | "Admin";
+export type StaffRole = "Teacher" | "TeacherAssistant" | "Coordinator" | "TechnologySystemsCoordinator" | "Admin";
 export type AttendanceStatus = "Present" | "Absent" | "Unmarked";
 export type TaskStatus = "Upcoming" | "InProgress" | "Done" | "Overdue" | "Blocked";
 export type TaskPriority = "High" | "Medium" | "Low";
@@ -731,6 +731,8 @@ export interface UpdateStaffDto {
   fullName?: string;
   initials?: string;
   role?: StaffRole;
+  /** yyyy-MM-dd */
+  startDate?: string;
   programIds?: Guid[];
   endDate?: string;
   /** True clears the end date, restoring the member to active. */

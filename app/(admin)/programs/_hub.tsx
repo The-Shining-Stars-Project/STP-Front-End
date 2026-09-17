@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { staffRoleLabel } from "@/lib/staffRoles";
+import { staffRoleLabel, staffRoleAvatarClass } from "@/lib/staffRoles";
 import { parseLocalDate } from "@/lib/format";
 import Link from "next/link";
 import {
@@ -87,7 +87,7 @@ function ManageStaffModal({
             const busy = busyId === s.id;
             return (
               <div className="list-row" key={s.id}>
-                <span className={`ss-avatar ${s.role.toLowerCase()} sm`}>{s.initials}</span>
+                <span className={`ss-avatar ${staffRoleAvatarClass(s.role)} sm`}>{s.initials}</span>
                 <div className="grow">
                   <div className="nm">{s.fullName}</div>
                   <div className="sub">{staffRoleLabel(s.role)}</div>
@@ -372,7 +372,7 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
                 </div>
               ) : staff.map((s) => (
                 <div className="list-row" key={s.id}>
-                  <span className={`ss-avatar ${s.role.toLowerCase()} sm`}>{s.initials}</span>
+                  <span className={`ss-avatar ${staffRoleAvatarClass(s.role)} sm`}>{s.initials}</span>
                   <div className="grow">
                     <Link
                       href={`/staff?expand=${encodeURIComponent(s.fullName)}`}

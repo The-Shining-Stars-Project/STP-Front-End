@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { parseLocalDate } from "@/lib/format";
+import { staffRoleAvatarClass } from "@/lib/staffRoles";
 import {
   FolderPlus,
   Plus,
@@ -99,7 +100,7 @@ function formatDueDate(dateStr: string | null): string {
 
 function dtoToTask(dto: ProjectTaskDto, staffList: StaffSummaryDto[]): Task {
   const staff = staffList.find((s) => s.id === dto.assignedToId);
-  const arole = staff ? staff.role.toLowerCase() : "admin";
+  const arole = staff ? staffRoleAvatarClass(staff.role) : "admin";
   return {
     id: dto.id,
     name: dto.name,
@@ -308,7 +309,7 @@ export default function TasksPage() {
               style={{ cursor: "pointer" }}
               onClick={() => setAssigneeFilter(assigneeFilter === s.id ? "all" : s.id)}
             >
-              <span className={`ss-avatar ${s.role.toLowerCase()} sm`} style={{ width: 18, height: 18, fontSize: 9 }}>{s.initials}</span>
+              <span className={`ss-avatar ${staffRoleAvatarClass(s.role)} sm`} style={{ width: 18, height: 18, fontSize: 9 }}>{s.initials}</span>
               {s.fullName}
             </span>
           ))}

@@ -16,6 +16,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { StaffSummaryDto, ProjectType } from "@/lib/types/api";
+import { staffRoleAvatarClass } from "@/lib/staffRoles";
 
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useDialogFocus } from "@/lib/useDialogFocus";
@@ -159,7 +160,7 @@ export function AddTaskModal({
                 return (
                   <button key={s.id} type="button" onClick={() => setForm((f) => ({ ...f, assigneeId: f.assigneeId === s.id ? "" : s.id }))}
                     style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: "var(--r-pill)", border: `0.5px solid ${selected ? "var(--border-hover)" : "var(--border)"}`, background: selected ? "var(--bg-secondary)" : "var(--surface)", color: selected ? "var(--fg)" : "var(--fg-secondary)", cursor: "pointer", fontSize: 13 }}>
-                    <span className={`ss-avatar ${s.role.toLowerCase()} sm`} style={{ width: 20, height: 20, fontSize: 9, flexShrink: 0 }}>{s.initials}</span>
+                    <span className={`ss-avatar ${staffRoleAvatarClass(s.role)} sm`} style={{ width: 20, height: 20, fontSize: 9, flexShrink: 0 }}>{s.initials}</span>
                     {s.fullName}
                   </button>
                 );

@@ -15,6 +15,8 @@ import {
 import type {
   ProgramSummaryDto,
   StaffRole,
+  StaffSummaryDto,
+  UpdateStaffDto,
 } from "@/lib/types/api";
 
 import { useDialogFocus } from "@/lib/useDialogFocus";
@@ -396,3 +398,127 @@ export function AddStaffModal({
   );
 }
 
+
+// ── Edit Staff Modal ──────────────────────────────────────────────────────────
+// Corrections after the fact (client, Sep 17 2026): a misspelled surname, a role change, a
+// wrong start date. Former members are editable too — Rachel had two "Scott Davis" records and
+// no way to tell them apart when linking a login, so a name can be qualified here.
+
+export function EditStaffModal({
+  member,
+  onClose,
+  onSave,
+}: {
+  member: StaffSummaryDto;
+  onClose: () => void;
+  onSave: (dto: UpdateStaffDto) => Promise<void>;
+}) {
+  const [fullName, setFullName] = useState(member.fullName);
+  const [initials, setInitials] = useState(member.initials);
+  const [role, setRole] = useState<StaffRole>(member.role);
+  const [startDate, setStartDate] = useState(member.startDate);
+  const [tShirtSize, setTShirtSize] = useState(member.tShirtSize ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEscapeKey(onClose);
+  const panelRef = useDialogFocus<HTMLDivElement>();
+
+  const trimmedName = fullName.trim();
+  const trimmedInitials = initials.trim();
+  const dto: UpdateStaffDto = {
+    ...(trimmedName !== member.fullName ? { fullName: trimmedName } : {}),
+    ...(trimmedInitials !== member.initials ? { initials: trimmedInitials } : {}),
+    ...(role !== member.role ? { role } : {}),
+    ...(startDate && startDate !== member.startDate ? { startDate } : {}),
+    ...(tShirtSize !== (member.tShirtSize ?? "") ? { tShirtSize } : {}),
+  };
+  const dirty = Object.keys(dto).length > 0;
+  const canSave = dirty && trimmedName.length > 0 && trimmedInitials.length > 0 && trimmedInitials.length <= 10 && !saving;
+
+  async function submit() {
+    if (!canSave) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(dto);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : "Couldn't save the changes — try again.");
+      setSaving(false);
+    }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%", boxSizing: "border-box",
+    border: "0.5px solid var(--border-hover)", borderRadius: "var(--r-md)",
+    padding: "8px 12px", fontSize: 13, color: "var(--fg)",
+    background: "var(--surface)", outline: "none",
+  };
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "var(--space-4)" }}
+    >
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Edit staff member" style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(480px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
+          <div>
+            <h3 style={{ fontSize: 15, fontWeight: 500, margin: "0 0 2px" }}>Edit staff member</h3>
+            <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>
+              {member.isFormer ? "Former staff member — their checklist history stays as it is." : "Programs are managed from each program's page; the checklist is below the row."}
+            </div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4, borderRadius: "var(--r-sm)" }}>
+            <X style={{ width: 16, height: 16 }} />
+          </button>
+        </div>
+
+        <div style={{ padding: "var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-4)", overflowY: "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 96px", gap: 12 }}>
+            <div>
+              <label className="ss-label" htmlFor="es-name" style={{ display: "block", marginBottom: 6 }}>Full name <span style={{ color: "var(--danger)", fontWeight: 400 }}>*</span></label>
+              <input id="es-name" type="text" value={fullName} maxLength={200} onChange={(e) => setFullName(e.target.value)} style={inputStyle} autoFocus />
+            </div>
+            <div>
+              <label className="ss-label" htmlFor="es-initials" style={{ display: "block", marginBottom: 6 }}>Initials</label>
+              <input id="es-initials" type="text" value={initials} maxLength={10} onChange={(e) => setInitials(e.target.value)} style={inputStyle} />
+            </div>
+          </div>
+
+          <div>
+            <div className="ss-label" style={{ marginBottom: 8 }}>Role</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {STAFF_ROLES.map((r) => (
+                <button key={r} type="button" className={`ss-chip${role === r ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setRole(r)}>
+                  {staffRoleLabel(r)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label className="ss-label" htmlFor="es-start" style={{ display: "block", marginBottom: 6 }}>Start date</label>
+              <input id="es-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={inputStyle} />
+            </div>
+            <div>
+              <label className="ss-label" htmlFor="es-shirt" style={{ display: "block", marginBottom: 6 }}>T-shirt size</label>
+              <select id="es-shirt" value={tShirtSize} onChange={(e) => setTShirtSize(e.target.value)} style={inputStyle}>
+                <option value="">Not set</option>
+                {sizeOptions(tShirtSize).map((sz) => <option key={sz} value={sz}>{sz}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {error && <div role="alert" style={{ fontSize: 13, color: "var(--danger)" }}>{error}</div>}
+        </div>
+
+        <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end", flexShrink: 0 }}>
+          <button className="ss-btn" type="button" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="ss-btn ss-btn-primary" type="button" onClick={submit} disabled={!canSave}>
+            <Check className="ss-btn-icon" />{saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -5,6 +5,7 @@ import { authApi } from "@/lib/api/auth";
 import { api, ApiError, MFA_ENROLLMENT_REQUIRED } from "@/lib/api/client";
 import { onUnauthorized, onMfaEnrollmentRequired, purgeLegacyToken } from "./token";
 import type { UserDto, LoginDto } from "@/lib/types/api";
+import { isManagementRole } from "@/lib/staffRoles";
 
 /** What the password step produced. `mfaRequired` means a code is still owed. */
 export type LoginOutcome = { mfaRequired: boolean };
@@ -153,7 +154,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         isAuthenticated: user !== null,
         isAdmin: user?.role === "Admin",
-        canManage: user?.role === "Admin" || user?.staffRole === "Coordinator" || user?.staffRole === "Admin",
+        canManage: user?.role === "Admin" || isManagementRole(user?.staffRole),
         mfaEnrollmentRequired,
         login,
         verifyMfa,
