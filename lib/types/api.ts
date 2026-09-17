@@ -323,6 +323,7 @@ export interface ParticipantSummaryDto {
   isSdpClient: boolean | null;
   sdpFmsName: string | null;
   sdpIndependentFacilitator: string | null;
+  sdpIndependentFacilitatorEmail: string | null;
   /** yyyy-MM-dd, null when not set. Always the first of a month by policy. */
   sdpStartDate: string | null;
   secondaryProgramId: Guid | null;
@@ -613,6 +614,7 @@ export interface CreateParticipantDto {
   isSdpClient?: boolean;
   sdpFmsName?: string;
   sdpIndependentFacilitator?: string;
+  sdpIndependentFacilitatorEmail?: string;
   sdpStartDate?: string;
   secondaryProgramId?: Guid;
 }
@@ -633,6 +635,7 @@ export interface UpdateParticipantDto {
   isSdpClient?: boolean;
   sdpFmsName?: string;
   sdpIndependentFacilitator?: string;
+  sdpIndependentFacilitatorEmail?: string;
   sdpStartDate?: string;
   clearSdpStartDate?: boolean;
   guardianName?: string;

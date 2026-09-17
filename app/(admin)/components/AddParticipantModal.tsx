@@ -48,6 +48,7 @@ type AddParticipantForm = {
   sdp: "" | "yes" | "no";
   sdpFms: string;
   sdpFacilitator: string;
+  sdpFacilitatorEmail: string;
   sdpStartDate: string;
 };
 
@@ -56,7 +57,7 @@ const EMPTY_FORM: AddParticipantForm = {
   guardianName: "", guardianPhone: "", guardianEmail: "", referralSource: "", tShirtSize: "", authExpiry: "",
   ippExpiry: "", allergies: "", anaphylactic: false, areasOfConcern: "", scEmail: "", scPhone: "", remind: "",
   intakeDocs: false, diploma: "", secondaryProgramId: "", intakeNotes: "", emergencyContacts: [""],
-  sdp: "", sdpFms: "", sdpFacilitator: "", sdpStartDate: "",
+  sdp: "", sdpFms: "", sdpFacilitator: "", sdpFacilitatorEmail: "", sdpStartDate: "",
 };
 
 function toInitials(name: string): string {
@@ -114,6 +115,7 @@ export default function AddParticipantModal({
       isSdpClient: form.sdp === "" ? undefined : form.sdp === "yes",
       sdpFmsName: form.sdp === "yes" ? form.sdpFms.trim() || undefined : undefined,
       sdpIndependentFacilitator: form.sdp === "yes" ? form.sdpFacilitator.trim() || undefined : undefined,
+      sdpIndependentFacilitatorEmail: form.sdp === "yes" ? form.sdpFacilitatorEmail.trim() || undefined : undefined,
       sdpStartDate: form.sdp === "yes" ? form.sdpStartDate || undefined : undefined,
     };
 
@@ -243,6 +245,10 @@ export default function AddParticipantModal({
                   <div className="ss-label" style={{ marginBottom: 6 }}>Independent Facilitator</div>
                   <input type="text" placeholder="Name" value={form.sdpFacilitator} onChange={(e) => setForm((f) => ({ ...f, sdpFacilitator: e.target.value }))} style={inputStyle} />
                 </div>
+              </div>
+              <div>
+                <div className="ss-label" style={{ marginBottom: 6 }}>Independent Facilitator email</div>
+                <input type="email" placeholder="name@email.com" value={form.sdpFacilitatorEmail} onChange={(e) => setForm((f) => ({ ...f, sdpFacilitatorEmail: e.target.value }))} style={inputStyle} />
               </div>
               <div>
                 <div className="ss-label" style={{ marginBottom: 6 }}>SDP start date <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Always the first of the month</span></div>

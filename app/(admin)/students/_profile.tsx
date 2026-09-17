@@ -89,7 +89,7 @@ type Form = {
   areasOfConcern: string; scEmail: string; scPhone: string; remind: string;
   intakeDocs: boolean; diploma: "" | "yes" | "no"; secondaryProgramId: string;
   startDate: string; emergencyContacts: string[];
-  sdp: "" | "yes" | "no"; sdpFms: string; sdpFacilitator: string; sdpStartDate: string;
+  sdp: "" | "yes" | "no"; sdpFms: string; sdpFacilitator: string; sdpFacilitatorEmail: string; sdpStartDate: string;
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -112,7 +112,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
     ippExpiry: "", dob: "", allergies: "", anaphylactic: false,
     areasOfConcern: "", scEmail: "", scPhone: "", remind: "", intakeDocs: false, diploma: "", secondaryProgramId: "",
     startDate: "", emergencyContacts: [""],
-    sdp: "", sdpFms: "", sdpFacilitator: "", sdpStartDate: "",
+    sdp: "", sdpFms: "", sdpFacilitator: "", sdpFacilitatorEmail: "", sdpStartDate: "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -164,6 +164,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
       sdp: d.isSdpClient === null ? "" : d.isSdpClient ? "yes" : "no",
       sdpFms: d.sdpFmsName ?? "",
       sdpFacilitator: d.sdpIndependentFacilitator ?? "",
+      sdpFacilitatorEmail: d.sdpIndependentFacilitatorEmail ?? "",
       sdpStartDate: d.sdpStartDate ?? "",
     };
   }
@@ -236,6 +237,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
       isSdpClient: form.sdp === "" ? undefined : form.sdp === "yes",
       sdpFmsName: form.sdp === "yes" ? form.sdpFms.trim() : "",
       sdpIndependentFacilitator: form.sdp === "yes" ? form.sdpFacilitator.trim() : "",
+      sdpIndependentFacilitatorEmail: form.sdp === "yes" ? form.sdpFacilitatorEmail.trim() : "",
       sdpStartDate: form.sdp === "yes" && form.sdpStartDate ? form.sdpStartDate : undefined,
       clearSdpStartDate: !(form.sdp === "yes" && form.sdpStartDate),
     };
@@ -613,6 +615,11 @@ export default function ParticipantProfile({ id }: { id: string }) {
                     "Independent Facilitator",
                     detail.sdpIndependentFacilitator || "—",
                     <input type="text" value={form.sdpFacilitator} placeholder="Name" onChange={(e) => setForm((f) => ({ ...f, sdpFacilitator: e.target.value }))} style={inputStyle} />
+                  )}
+                  {field(
+                    "Independent Facilitator email",
+                    detail.sdpIndependentFacilitatorEmail ? <a href={`mailto:${detail.sdpIndependentFacilitatorEmail}`} style={{ color: "var(--primary)" }}>{detail.sdpIndependentFacilitatorEmail}</a> : "—",
+                    <input type="email" value={form.sdpFacilitatorEmail} placeholder="name@email.com" onChange={(e) => setForm((f) => ({ ...f, sdpFacilitatorEmail: e.target.value }))} style={inputStyle} />
                   )}
                   {field(
                     "SDP start date",
