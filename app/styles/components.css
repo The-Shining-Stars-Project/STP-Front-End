@@ -275,6 +275,8 @@
 .ss-att-btn.is-selected.absent { background: var(--danger); border-color: var(--danger); color: var(--fg-on-color); }
 .ss-att-btn.is-selected.late { background: var(--warning); border-color: var(--warning); color: var(--warning-text); }
 .ss-att-btn.is-selected.excused { background: var(--neutral); border-color: var(--neutral); color: var(--fg-on-color); }
+.ss-att-btn.is-selected.rescheduled { background: var(--warning); border-color: var(--warning); color: var(--warning-text); }
+.ss-att-btn.is-selected.notscheduled { background: var(--neutral); border-color: var(--neutral); color: var(--fg-on-color); }
 
 /* ============================================================
    7. PROGRESS BARS

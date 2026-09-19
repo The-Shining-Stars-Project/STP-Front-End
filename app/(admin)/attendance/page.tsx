@@ -30,7 +30,7 @@ import EmptyState from "../components/EmptyState";
 import EventsPanel from "./_events";
 
 export default function AttendancePage() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, canManage } = useAuth();
 
   // Classes and events are two different registers, not two views of one — event attendance
   // is tracked separately and never counts toward class attendance %.
@@ -188,6 +188,8 @@ export default function AttendancePage() {
   const total = entries.length;
   const present = entries.filter((e) => e.status === "Present").length;
   const absent = entries.filter((e) => e.status === "Absent").length;
+  const rescheduled = entries.filter((e) => e.status === "Rescheduled").length;
+  const notScheduled = entries.filter((e) => e.status === "NotScheduled").length;
   const marked = entries.filter((e) => e.status !== "Unmarked").length;
   const locked = selected?.status === "submitted";
 
@@ -196,6 +198,8 @@ export default function AttendancePage() {
       entries.filter((e) => {
         if (filter === "present" && e.status !== "Present") return false;
         if (filter === "absent" && e.status !== "Absent") return false;
+        if (filter === "rescheduled" && e.status !== "Rescheduled") return false;
+        if (filter === "not scheduled" && e.status !== "NotScheduled") return false;
         if (filter === "unmarked" && e.status !== "Unmarked") return false;
         if (query && !e.fullName.toLowerCase().includes(query.toLowerCase().trim())) return false;
         return true;
@@ -258,7 +262,7 @@ export default function AttendancePage() {
           </div>
 
           {tab === "events" ? (
-            <EventsPanel canManage={isAdmin} />
+            <EventsPanel canManage={canManage} />
           ) : (
           <>
           {error && (
@@ -278,6 +282,7 @@ export default function AttendancePage() {
           {selected ? (
             // ── ROSTER VIEW ──────────────────────────────────────────────────
             <RosterView
+              rescheduled={rescheduled} notScheduled={notScheduled} canManage={canManage}
               selected={selected}
               locked={locked}
               total={total}

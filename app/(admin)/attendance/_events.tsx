@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarDays, Check, Plus, Search, Users, X, RotateCcw, Trash2 } from "lucide-react";
+import { attendanceLabel, isManagementStatus } from "@/lib/attendanceStatus";
 import { eventsApi } from "@/lib/api/events";
 import { useReferenceLists } from "@/lib/api/hooks";
 import { ApiError, describeApiError } from "@/lib/api/client";
@@ -207,15 +208,21 @@ export default function EventsPanel({ canManage }: { canManage: boolean }) {
                     {e.siteName && <span style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>{e.siteName}</span>}
 
                     <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
-                      {(["Present", "Absent"] as const).map((st) => (
+                      {(["Present", "Absent", "Rescheduled", "NotScheduled"] as const)
+                        .filter((st) => canManage || !isManagementStatus(st))
+                        .map((st) => (
                         <button key={st} type="button"
                           disabled={locked || !e.canMark}
                           onClick={() => mark(e.recordId, st, e.siteId)}
                           className={`ss-chip${e.status === st ? " is-active" : ""}`}
+                          title={isManagementStatus(st) ? "Counts as marked; left out of attendance rates" : undefined}
                           style={{ cursor: locked || !e.canMark ? "not-allowed" : "pointer", opacity: locked || !e.canMark ? 0.5 : 1 }}>
-                          {st}
+                          {attendanceLabel(st)}
                         </button>
                       ))}
+                      {!canManage && isManagementStatus(e.status) && (
+                        <span className="ss-chip is-active" title="Set by a coordinator or admin">{attendanceLabel(e.status)}</span>
+                      )}
                       {canManage && !locked && (
                         <button type="button"
                           onClick={() => removeStar(e.participantId)}

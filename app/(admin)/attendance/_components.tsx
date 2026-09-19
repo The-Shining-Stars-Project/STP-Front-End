@@ -18,8 +18,11 @@ import {
   MapPin,
   Plus,
   Lock,
+  CalendarClock,
+  CalendarOff,
   type LucideIcon,
 } from "lucide-react";
+import { attendanceLabel, isManagementStatus } from "@/lib/attendanceStatus";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import type {
   ScheduledSessionDto,
@@ -34,9 +37,13 @@ import { useDialogFocus } from "@/lib/useDialogFocus";
 export const ATT_OPTS: { key: AttendanceStatus; icon: LucideIcon; label: string; cls: string }[] = [
   { key: "Present", icon: Check, label: "Present", cls: "present" },
   { key: "Absent", icon: X, label: "Absent", cls: "absent" },
+  // Management-only (client, Sep 2026): the class moved, or no class was expected for this
+  // star. Both count as marked but never move the attendance rate.
+  { key: "Rescheduled", icon: CalendarClock, label: "Rescheduled", cls: "rescheduled" },
+  { key: "NotScheduled", icon: CalendarOff, label: "Not scheduled", cls: "notscheduled" },
 ];
 
-export const FILTERS = ["all", "present", "absent", "unmarked"] as const;
+export const FILTERS = ["all", "present", "absent", "rescheduled", "not scheduled", "unmarked"] as const;
 export type Filter = (typeof FILTERS)[number];
 
 export const CARD_STATUS: Record<
@@ -279,13 +286,16 @@ export function AdHocStarter({
 // ── Roster view ────────────────────────────────────────────────────────────────
 
 export function RosterView({
-  selected, locked, total, present, absent, marked,
+  selected, locked, total, present, absent, marked, rescheduled = 0, notScheduled = 0, canManage = false,
   filter, setFilter, query, setQuery, visibleEntries, loadingRoster,
   onBack, onMark, onOpenNote, onSubmit, submitting, th,
 }: {
   selected: SessionRosterDto;
   locked: boolean;
   total: number; present: number; absent: number; marked: number;
+  rescheduled?: number; notScheduled?: number;
+  /** Shows the Rescheduled / Not scheduled buttons (coordinators and admins). */
+  canManage?: boolean;
   filter: Filter; setFilter: (f: Filter) => void;
   query: string; setQuery: (q: string) => void;
   visibleEntries: SessionRosterDto["entries"];
@@ -411,6 +421,13 @@ export function RosterView({
           <span className="num" style={{ color: "var(--danger)" }}>{absent}</span>
           <span className="delta danger"><UserX />{pct(absent)} of roster</span>
         </div>
+        {(rescheduled > 0 || notScheduled > 0) && (
+          <div className="adm-stat">
+            <span className="label">Not counted</span>
+            <span className="num" style={{ color: "var(--fg-secondary)" }}>{rescheduled + notScheduled}</span>
+            <span className="delta muted"><CalendarClock />{rescheduled} rescheduled · {notScheduled} not scheduled</span>
+          </div>
+        )}
       </div>
 
       {/* roster card */}
@@ -469,14 +486,15 @@ export function RosterView({
                     </div>
                   </td>
                   <td style={{ padding: "10px 16px", textAlign: "center" }}>
-                    <div style={{ display: "inline-flex", gap: 3 }}>
-                      {ATT_OPTS.map((o) => {
+                    <div style={{ display: "inline-flex", gap: 3, alignItems: "center" }}>
+                      {ATT_OPTS.filter((o) => canManage || !isManagementStatus(o.key)).map((o) => {
                         const Icon = o.icon;
                         return (
                           <button
                             key={o.key}
                             className={`ss-att-btn ${o.cls}${r.status === o.key ? " is-selected" : ""}`}
                             title={locked ? "Session submitted — locked" : o.label}
+                            aria-label={`${o.label}: ${r.fullName}`}
                             disabled={locked}
                             style={locked ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
                             onClick={() => onMark(r.recordId, o.key)}
@@ -485,6 +503,10 @@ export function RosterView({
                           </button>
                         );
                       })}
+                      {/* A teacher can see (not change) a management status a coordinator set. */}
+                      {!canManage && isManagementStatus(r.status) && (
+                        <span className="ss-chip is-active" title="Set by a coordinator or admin">{attendanceLabel(r.status)}</span>
+                      )}
                     </div>
                   </td>
                   <td style={{ padding: "10px 16px", textAlign: "center" }}>

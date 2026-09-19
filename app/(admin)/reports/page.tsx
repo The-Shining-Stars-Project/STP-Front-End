@@ -256,7 +256,7 @@ export default function ReportsPage() {
           <StatCard
             label="Marked Present Rate"
             num={dash(att ? `${att.presentRatePct}%` : "—")}
-            delta={<><CalendarCheck />{att?.present ?? 0} present · {att?.absent ?? 0} absent</>}
+            delta={<><CalendarCheck />{att?.present ?? 0} present · {att?.absent ?? 0} absent{att && (att.rescheduled + att.notScheduled) > 0 ? ` · ${att.rescheduled + att.notScheduled} not counted` : ""}</>}
             deltaClass="muted"
           />
           <StatCard

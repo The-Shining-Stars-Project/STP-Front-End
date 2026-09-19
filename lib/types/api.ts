@@ -6,7 +6,8 @@ export type Guid = string;
 
 export type ParticipantStatus = "Active" | "Prospective" | "Attention" | "Former" | "AuthPending" | "Inquiry" | "NotInterested";
 export type StaffRole = "Teacher" | "TeacherAssistant" | "Coordinator" | "TechnologySystemsCoordinator" | "Admin";
-export type AttendanceStatus = "Present" | "Absent" | "Unmarked";
+/** Rescheduled / NotScheduled count as marked but are left out of attendance rates; management-only to set. */
+export type AttendanceStatus = "Present" | "Absent" | "Unmarked" | "Rescheduled" | "NotScheduled";
 export type TaskStatus = "Upcoming" | "InProgress" | "Done" | "Overdue" | "Blocked";
 export type TaskPriority = "High" | "Medium" | "Low";
 export type ScriptType = "Musical" | "Play" | "Scene" | "Skit";
@@ -912,6 +913,8 @@ export interface AttendanceSummaryDto {
   present: number;
   absent: number;
   unmarked: number;
+  rescheduled: number;
+  notScheduled: number;
   presentRatePct: number;
 }
 
