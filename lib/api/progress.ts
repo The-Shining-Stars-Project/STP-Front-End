@@ -4,6 +4,8 @@ import type {
   WeeklyDataEntryDto,
   MonthlyProgressSnapshotDto,
   RecordWeeklyScoreDto,
+  SaveWeeklyScoresDto,
+  SaveWeeklyScoresResultDto,
   ConfirmMonthEndDto,
   WeeklyFocusSkillDto,
   SetFocusSkillsDto,
@@ -23,6 +25,9 @@ export const progressApi = {
     api.get<WeeklyDataEntryDto[]>(`/api/progress/weekly?programId=${programId}&month=${encodeURIComponent(month)}`),
   recordWeekly:   (dto: RecordWeeklyScoreDto) =>
     api.post<WeeklyDataEntryDto>("/api/progress/weekly", dto),
+  /** Every pending edit from a grid in one request (null score = clear the cell). */
+  saveWeekly:     (dto: SaveWeeklyScoresDto) =>
+    api.put<SaveWeeklyScoresResultDto>("/api/progress/weekly", dto),
   computeMonthEnd: (participantId: string, month: string) =>
     api.post<MonthlyProgressSnapshotDto[]>(`/api/progress/star/${participantId}/compute?month=${encodeURIComponent(month)}`, {}),
   confirmMonthEnd: (participantId: string, month: string, dto: ConfirmMonthEndDto) =>

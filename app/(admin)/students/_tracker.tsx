@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ClipboardList, RefreshCw, Check } from "lucide-react";
+import { ClipboardList, RefreshCw, Check, X } from "lucide-react";
+import { describeApiError } from "@/lib/api/client";
 import { progressApi, goalBankApi } from "@/lib/api/progress";
 import { taxonomyApi } from "@/lib/api/taxonomy";
 import type {
@@ -85,11 +86,20 @@ export default function TrackerWidget({ participantId, tracks = ["PartTime"] }: 
   const [savingSummary, setSavingSummary] = useState(false);
   const [customCells, setCustomCells] = useState<Set<string>>(new Set()); // `${kind}:${week}` in custom-text mode
 
+  // Score edits are held here until "Save scores" — key `${subSkillId}:${week}`, null = clear.
+  // Per-cell autosave (the old way) let two quick changes race, and the older reply would
+  // win and "reset" the cell; it also had no way to clear a score at all.
+  const [draft, setDraft] = useState<Map<string, DataScore | null>>(new Map());
+  const [savingScores, setSavingScores] = useState(false);
+  const [scoreError, setScoreError] = useState<string | null>(null);
+
   useEffect(() => { taxonomyApi.getObjectiveAreas().then(setAreas).catch(() => setAreas([])); }, []);
   useEffect(() => { goalBankApi.get().then(setGoalBank).catch(() => setGoalBank([])); }, []);
 
   useEffect(() => {
     setLoading(true);
+    setDraft(new Map());
+    setScoreError(null);
     progressApi.getStarMonth(participantId, month)
       .then((d) => { setData(d); setError(false); setSummaryForm(sumFrom(d.monthlySummary)); })
       .catch(() => setError(true))
@@ -135,23 +145,40 @@ export default function TrackerWidget({ participantId, tracks = ["PartTime"] }: 
       .finally(() => setSavingSummary(false));
   }
 
-  function recordScore(subSkillId: string, week: number, score: DataScore) {
-    progressApi.recordWeekly({ participantId, subSkillId, monthKey: month, weekNumber: week, score })
-      .then((saved) => setData((prev) => {
-        if (!prev) return prev;
-        // The save recomputes this skill's month-end snapshot server-side and returns it,
-        // so the Month-end column updates the moment a score lands — no refetch, and no
-        // extra progress.star.view rows in the audit log.
-        const snapshots = saved.snapshot
-          ? [...prev.snapshots.filter((sn) => sn.subSkillId !== subSkillId), saved.snapshot]
-          : prev.snapshots;
-        return {
-          ...prev,
-          entries: [...prev.entries.filter((e) => !(e.subSkillId === subSkillId && e.weekNumber === week)), saved],
-          snapshots,
-        };
-      }))
-      .catch(() => { /* leave unchanged on failure */ });
+  function editScore(subSkillId: string, week: number, score: DataScore | null) {
+    const key = `${subSkillId}:${week}`;
+    setDraft((prev) => {
+      const next = new Map(prev);
+      const saved = entryMap.get(key)?.score ?? null;
+      if (score === saved) next.delete(key); else next.set(key, score);
+      return next;
+    });
+  }
+
+  function discardScores() { setDraft(new Map()); setScoreError(null); }
+
+  async function saveScores() {
+    if (draft.size === 0) return;
+    setSavingScores(true);
+    setScoreError(null);
+    const changes = [...draft.entries()].map(([key, score]) => {
+      const [subSkillId, w] = key.split(":");
+      return { participantId, subSkillId, weekNumber: Number(w), score };
+    });
+    try {
+      const res = await progressApi.saveWeekly({ monthKey: month, changes });
+      const touched = new Set(changes.map((c) => c.subSkillId));
+      setData((prev) => prev ? {
+        ...prev,
+        entries: [...prev.entries.filter((e) => !touched.has(e.subSkillId)), ...res.entries],
+        snapshots: [...prev.snapshots.filter((sn) => !touched.has(sn.subSkillId)), ...res.snapshots],
+      } : prev);
+      setDraft(new Map());
+    } catch (e) {
+      setScoreError(describeApiError(e, "Couldn't save the scores — nothing was changed. Try again."));
+    } finally {
+      setSavingScores(false);
+    }
   }
 
   function confirmLevel(subSkillId: string, level: ProgressLevel) {
@@ -217,11 +244,23 @@ export default function TrackerWidget({ participantId, tracks = ["PartTime"] }: 
                 <tbody>
                   {sections.map((area) => (
                     <FragmentSection key={area.id} area={area}
-                      entryMap={entryMap} snapMap={snapMap}
-                      onScore={recordScore} onConfirm={confirmLevel} />
+                      entryMap={entryMap} snapMap={snapMap} draft={draft}
+                      onScore={editScore} onConfirm={confirmLevel} />
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div style={{ marginTop: "var(--space-3)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" className="ss-btn ss-btn-primary" onClick={saveScores} disabled={draft.size === 0 || savingScores}>
+                <Check className="ss-btn-icon" />{savingScores ? "Saving…" : draft.size > 0 ? `Save ${draft.size} score${draft.size === 1 ? "" : "s"}` : "Save scores"}
+              </button>
+              <button type="button" className="ss-btn" onClick={discardScores} disabled={draft.size === 0 || savingScores}>
+                <X className="ss-btn-icon" />Discard
+              </button>
+              {draft.size > 0 && !scoreError && (
+                <span style={{ fontSize: "var(--fs-meta)", color: "var(--warning-text, var(--warning))" }}>Unsaved changes — nothing is stored until you save.</span>
+              )}
+              {scoreError && <span role="alert" style={{ fontSize: "var(--fs-meta)", color: "var(--danger)" }}>{scoreError}</span>}
             </div>
             <div style={{ marginTop: "var(--space-3)", fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)", lineHeight: "var(--lh-body)" }}>
               Data: <strong>0</strong> Refusal · <strong>1</strong> Full prompts · <strong>2</strong> Minimal prompts · <strong>3</strong> Independent · <strong>N/A</strong> not targeted.
@@ -348,12 +387,13 @@ export default function TrackerWidget({ participantId, tracks = ["PartTime"] }: 
 }
 
 function FragmentSection({
-  area, entryMap, snapMap, onScore, onConfirm,
+  area, entryMap, snapMap, draft, onScore, onConfirm,
 }: {
   area: ObjectiveAreaDto;
   entryMap: Map<string, WeeklyDataEntryDto>;
   snapMap: Map<string, MonthlyProgressSnapshotDto>;
-  onScore: (subSkillId: string, week: number, score: DataScore) => void;
+  draft: Map<string, DataScore | null>;
+  onScore: (subSkillId: string, week: number, score: DataScore | null) => void;
   onConfirm: (subSkillId: string, level: ProgressLevel) => void;
 }) {
   const rowLevels = area.track === "Pathways" ? PATHWAYS_LEVELS : LEVELS;
@@ -379,14 +419,16 @@ function FragmentSection({
           <tr key={s.id} style={{ borderBottom: "0.5px solid var(--border)" }}>
             <td style={{ padding: "5px 8px", color: "var(--fg)" }}>{s.name}</td>
             {WEEKS.map((w) => {
-              const entry = entryMap.get(`${s.id}:${w}`);
+              const key = `${s.id}:${w}`;
+              const pending = draft.has(key);
+              const value = pending ? draft.get(key) ?? "" : entryMap.get(key)?.score ?? "";
               return (
                 <td key={w} style={{ padding: "4px 2px", textAlign: "center" }}>
                   <select
-                    value={entry?.score ?? ""}
-                    onChange={(e) => e.target.value && onScore(s.id, w, e.target.value as DataScore)}
-                    style={cellSelect}
-                    aria-label={`${s.name} week ${w}`}
+                    value={value}
+                    onChange={(e) => onScore(s.id, w, (e.target.value || null) as DataScore | null)}
+                    style={pending ? { ...cellSelect, borderColor: "var(--warning)", background: "color-mix(in srgb, var(--warning) 12%, var(--surface))" } : cellSelect}
+                    aria-label={`${s.name} week ${w}${pending ? " (unsaved)" : ""}`}
                   >
                     <option value="">–</option>
                     {SCORES.map((sc) => <option key={sc.value} value={sc.value}>{sc.short}</option>)}

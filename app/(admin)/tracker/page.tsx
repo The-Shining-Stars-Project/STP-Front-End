@@ -5,6 +5,7 @@ import Link from "next/link";
 import { PenLine, Check, X, Info } from "lucide-react";
 import { useMyPrograms, useParticipants, useObjectiveAreas, useStaff } from "@/lib/api/hooks";
 import { progressApi } from "@/lib/api/progress";
+import { describeApiError } from "@/lib/api/client";
 import { rosterApi } from "@/lib/api/roster";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { programTint } from "@/lib/programColor";
@@ -202,10 +203,60 @@ export default function WeeklyDataPage() {
     return () => { active = false; };
   }, [programKey, month, dataKey]);
 
-  function recordScore(participantId: string, subSkillId: string, score: DataScore) {
-    setScores((prev) => new Map(prev).set(scoreKey(participantId, subSkillId, week), score));
-    progressApi.recordWeekly({ participantId, subSkillId, monthKey: month, weekNumber: week, score }).catch(() => {});
+  // Edits wait here until "Save scores" (key = scoreKey, null = clear). Per-cell autosave let
+  // two quick changes race so the older reply "reset" the cell, and could never clear one.
+  const [draft, setDraft] = useState<Map<string, DataScore | null>>(new Map());
+  const [savingScores, setSavingScores] = useState(false);
+  const [scoreError, setScoreError] = useState<string | null>(null);
+  const dirty = draft.size > 0;
+
+  function editScore(participantId: string, subSkillId: string, score: DataScore | null) {
+    const key = scoreKey(participantId, subSkillId, week);
+    setDraft((prev) => {
+      const next = new Map(prev);
+      if ((scores.get(key) ?? null) === score) next.delete(key); else next.set(key, score);
+      return next;
+    });
   }
+
+  function discardScores() { setDraft(new Map()); setScoreError(null); }
+
+  async function saveScores() {
+    if (!dirty) return;
+    setSavingScores(true);
+    setScoreError(null);
+    const changes = [...draft.entries()].map(([key, score]) => {
+      const [participantId, subSkillId, w] = key.split(":");
+      return { participantId, subSkillId, weekNumber: Number(w), score };
+    });
+    try {
+      await progressApi.saveWeekly({ monthKey: month, changes });
+      setScores((prev) => {
+        const next = new Map(prev);
+        for (const [key, score] of draft) { if (score === null) next.delete(key); else next.set(key, score); }
+        return next;
+      });
+      setDraft(new Map());
+    } catch (e) {
+      setScoreError(describeApiError(e, "Couldn't save the scores — nothing was changed. Try again."));
+    } finally {
+      setSavingScores(false);
+    }
+  }
+
+  // Changing the week, month or filters would hide unsaved cells; ask first.
+  function guarded<T>(setter: (v: T) => void) {
+    return (v: T) => {
+      if (dirty && !window.confirm("You have unsaved scores. Discard them?")) return;
+      if (dirty) discardScores();
+      setter(v);
+    };
+  }
+  const changeWeek = guarded(setWeek);
+  const changeMonth = guarded(setMonth);
+  const changeStaff = guarded(setStaffFilter);
+  const changeProgram = guarded(setProgramFilter);
+  const changeStatus = guarded(setStatusFilter);
 
   // Focus-skill editing — one program at a time.
   const [editingProgramId, setEditingProgramId] = useState<string | null>(null);
@@ -239,8 +290,8 @@ export default function WeeklyDataPage() {
       <div className="adm-topbar">
         <div className="titles"><h1>Weekly Data</h1></div>
         <div className="right" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <StarStatusFilter value={statusFilter} onChange={setStatusFilter} />
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
+          <StarStatusFilter value={statusFilter} onChange={changeStatus} />
+          <input type="month" value={month} onChange={(e) => changeMonth(e.target.value)}
             style={{ border: "0.5px solid var(--border-hover)", borderRadius: "var(--r-md)", padding: "6px 8px", fontSize: 12, color: "var(--fg)", background: "var(--surface)", outline: "none" }} />
         </div>
       </div>
@@ -250,11 +301,11 @@ export default function WeeklyDataPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <span className="ss-label" style={{ color: "var(--fg-tertiary)", marginRight: 2 }}>Staff</span>
-            <button type="button" className={`ss-chip${staffFilter === "" ? " is-active" : ""}`} aria-pressed={staffFilter === ""} style={{ cursor: "pointer" }} onClick={() => setStaffFilter("")}>All stars</button>
+            <button type="button" className={`ss-chip${staffFilter === "" ? " is-active" : ""}`} aria-pressed={staffFilter === ""} style={{ cursor: "pointer" }} onClick={() => changeStaff("")}>All stars</button>
             {staffChoices.map((m) => {
               const scope = starsByStaff.get(m.id)!;
               return (
-                <button key={m.id} type="button" className={`ss-chip${staffFilter === m.id ? " is-active" : ""}`} aria-pressed={staffFilter === m.id} style={{ cursor: "pointer" }} onClick={() => setStaffFilter(staffFilter === m.id ? "" : m.id)}
+                <button key={m.id} type="button" className={`ss-chip${staffFilter === m.id ? " is-active" : ""}`} aria-pressed={staffFilter === m.id} style={{ cursor: "pointer" }} onClick={() => changeStaff(staffFilter === m.id ? "" : m.id)}
                   title={scope.fromRoster ? `${scope.ids.size} assigned on the roster this term` : `${scope.ids.size} in the programs they teach`}>
                   {m.id === user?.staffMemberId ? "My stars" : m.fullName}
                   <span style={{ opacity: 0.7, marginLeft: 4 }}>{scope.ids.size}</span>
@@ -273,12 +324,12 @@ export default function WeeklyDataPage() {
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <span className="ss-label" style={{ color: "var(--fg-tertiary)", marginRight: 2 }}>Program</span>
-            <ProgramPills programs={programs} value={programFilter} onChange={setProgramFilter} allLabel="All programs" compact />
+            <ProgramPills programs={programs} value={programFilter} onChange={changeProgram} allLabel="All programs" compact />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <span className="ss-label" style={{ color: "var(--fg-tertiary)", marginRight: 2 }}>Week</span>
             {WEEKS.map((w) => (
-              <button key={w} type="button" className={`ss-chip${week === w ? " is-active" : ""}`} aria-pressed={week === w} style={{ cursor: "pointer" }} onClick={() => setWeek(w)}>W{w}</button>
+              <button key={w} type="button" className={`ss-chip${week === w ? " is-active" : ""}`} aria-pressed={week === w} style={{ cursor: "pointer" }} onClick={() => changeWeek(w)}>W{w}</button>
             ))}
           </div>
         </div>
@@ -317,8 +368,9 @@ export default function WeeklyDataPage() {
                 week={week}
                 weekFocus={(focus.get(g.program.id) ?? []).filter((f) => f.weekNumber === week)}
                 scores={scores}
+                draft={draft}
                 areas={areas}
-                onScore={recordScore}
+                onScore={editScore}
                 editing={editingProgramId === g.program.id}
                 editorDisabled={editingProgramId !== null && editingProgramId !== g.program.id}
                 focusDraft={focusDraft}
@@ -333,8 +385,20 @@ export default function WeeklyDataPage() {
           </div>
         )}
 
+        {!loading && totalStars > 0 && (
+          <div style={{ position: "sticky", bottom: 0, marginTop: "var(--space-3)", padding: "10px 12px", background: "var(--surface)", border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", boxShadow: "0 -4px 16px rgba(0,0,0,.05)" }}>
+            <button type="button" className="ss-btn ss-btn-primary" onClick={saveScores} disabled={!dirty || savingScores}>
+              <Check className="ss-btn-icon" />{savingScores ? "Saving…" : dirty ? `Save ${draft.size} score${draft.size === 1 ? "" : "s"}` : "Save scores"}
+            </button>
+            <button type="button" className="ss-btn" onClick={discardScores} disabled={!dirty || savingScores}>
+              <X className="ss-btn-icon" />Discard
+            </button>
+            {dirty && !scoreError && <span style={{ fontSize: "var(--fs-meta)", color: "var(--warning-text, var(--warning))" }}>Unsaved changes — nothing is stored until you save.</span>}
+            {scoreError && <span role="alert" style={{ fontSize: "var(--fs-meta)", color: "var(--danger)" }}>{scoreError}</span>}
+          </div>
+        )}
         <div style={{ marginTop: "var(--space-3)", fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)" }}>
-          <strong>0</strong> Refusal · <strong>1</strong> Full prompts · <strong>2</strong> Minimal prompts · <strong>3</strong> Independent · <strong>N/A</strong> not targeted. Scores save as you enter them.
+          <strong>0</strong> Refusal · <strong>1</strong> Full prompts · <strong>2</strong> Minimal prompts · <strong>3</strong> Independent · <strong>N/A</strong> not targeted. Pick scores, then click Save.
         </div>
       </div>
     </div>
@@ -343,7 +407,7 @@ export default function WeeklyDataPage() {
 
 /** One program's block: its focus skills for the week, coverage, and the entry grid. */
 function ProgramSection({
-  program, stars, week, weekFocus, scores, areas, onScore,
+  program, stars, week, weekFocus, scores, draft, areas, onScore,
   editing, editorDisabled, focusDraft, savingFocus, onOpenEditor, onToggleDraft, onSetDraft, onSaveFocus, onCancelEditor,
 }: {
   program: ProgramSummaryDto;
@@ -351,8 +415,9 @@ function ProgramSection({
   week: number;
   weekFocus: WeeklyFocusSkillDto[];
   scores: Map<string, DataScore>;
+  draft: Map<string, DataScore | null>;
   areas: ObjectiveAreaDto[];
-  onScore: (participantId: string, subSkillId: string, score: DataScore) => void;
+  onScore: (participantId: string, subSkillId: string, score: DataScore | null) => void;
   editing: boolean;
   editorDisabled: boolean;
   focusDraft: Set<string>;
@@ -377,7 +442,10 @@ function ProgramSection({
     let done = 0;
     const missing: string[] = [];
     for (const p of stars) {
-      const scored = weekFocus.every((f) => scores.get(scoreKey(p.id, f.subSkillId, week)));
+      const scored = weekFocus.every((f) => {
+        const key = scoreKey(p.id, f.subSkillId, week);
+        return draft.has(key) ? draft.get(key) !== null : scores.has(key);
+      });
       if (scored) done++;
       else missing.push(p.fullName);
     }
@@ -387,7 +455,7 @@ function ProgramSection({
     const dueIndex = due ? DAY_ORDER.indexOf(due) : -1;
     const pastDue = dueIndex >= 0 && new Date().getDay() > dueIndex;
     return { done, total: stars.length, missing, due, pastDue };
-  }, [stars, weekFocus, scores, week, program.meetingDays]);
+  }, [stars, weekFocus, scores, draft, week, program.meetingDays]);
 
   return (
     <section style={{ border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", background: "var(--surface)", overflow: "hidden" }}>
@@ -533,9 +601,13 @@ function ProgramSection({
                   </td>
                   {weekFocus.map((f) => {
                     const key = scoreKey(p.id, f.subSkillId, week);
+                    const pending = draft.has(key);
+                    const value = pending ? draft.get(key) ?? "" : scores.get(key) ?? "";
                     return (
                       <td key={f.subSkillId} style={{ padding: "4px 8px", textAlign: "center" }}>
-                        <select value={scores.get(key) ?? ""} onChange={(e) => e.target.value && onScore(p.id, f.subSkillId, e.target.value as DataScore)} style={cellSelect} aria-label={`${p.fullName} — ${f.subSkillName}`}>
+                        <select value={value} onChange={(e) => onScore(p.id, f.subSkillId, (e.target.value || null) as DataScore | null)}
+                          style={pending ? { ...cellSelect, borderColor: "var(--warning)", background: "color-mix(in srgb, var(--warning) 12%, var(--surface))" } : cellSelect}
+                          aria-label={`${p.fullName} — ${f.subSkillName}${pending ? " (unsaved)" : ""}`}>
                           <option value="">–</option>
                           {SCORES.map((sc) => <option key={sc.value} value={sc.value}>{sc.short}</option>)}
                         </select>

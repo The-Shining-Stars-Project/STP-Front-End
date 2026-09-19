@@ -550,6 +550,26 @@ export interface UpsertPerStarPlanDto {
   notes?: string | null;
 }
 
+/** A grid's worth of score edits saved in one request; a null score clears the cell. */
+export interface SaveWeeklyScoresDto {
+  monthKey: string;
+  weekDate?: string | null;
+  changes: WeeklyScoreChangeDto[];
+}
+
+export interface WeeklyScoreChangeDto {
+  participantId: Guid;
+  subSkillId: Guid;
+  weekNumber: number;
+  score: DataScore | null;
+}
+
+export interface SaveWeeklyScoresResultDto {
+  /** Surviving entries for every (star, skill) touched — a cleared cell is simply absent. */
+  entries: WeeklyDataEntryDto[];
+  snapshots: MonthlyProgressSnapshotDto[];
+}
+
 export interface RecordWeeklyScoreDto {
   participantId: Guid;
   subSkillId: Guid;
