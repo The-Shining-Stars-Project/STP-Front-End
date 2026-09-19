@@ -5,6 +5,8 @@ import { Target, Check } from "lucide-react";
 import { planningApi } from "@/lib/api/planning";
 import { useMyPrograms, useStaff, useObjectiveAreas } from "@/lib/api/hooks";
 import ProgramPills from "../components/ProgramPills";
+import TierFilter from "../components/TierFilter";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import StarStatusFilter, { DEFAULT_STAR_STATUS_FILTER, starStatusMatches, type StarStatusFilterValue } from "../components/StarStatusFilter";
 import type {
   PerStarPlanDto,
@@ -45,6 +47,9 @@ export default function PlanningPage() {
   const [error, setError] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StarStatusFilterValue>(DEFAULT_STAR_STATUS_FILTER);
+  const [tierFilter, setTierFilter] = useState<ProgressLevel | null>(null);
+  const [staffFilter, setStaffFilter] = useState<string>(""); // "" = everyone
+  const { user } = useAuth();
   const activeStaff = useMemo(() => staff.filter((s) => !s.isFormer), [staff]);
 
   useEffect(() => {
@@ -77,15 +82,37 @@ export default function PlanningPage() {
       .finally(() => setSavingId((cur) => (cur === plan.participantId ? null : cur)));
   }
 
+  // Plans that pass the status filter — the pool the tier/staff chips count and filter within.
+  const inStatus = useMemo(() => plans.filter((x) => starStatusMatches(x.status, statusFilter)), [plans, statusFilter]);
+  const tierCounts = useMemo(() => {
+    const m = new Map<ProgressLevel, number>();
+    for (const p of inStatus) m.set(p.primaryTier, (m.get(p.primaryTier) ?? 0) + 1);
+    return m;
+  }, [inStatus]);
+  // Staff chips: whoever is assigned to at least one star in view, the signed-in user first.
+  const staffChoices = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const p of inStatus) if (p.assignedStaffId) counts.set(p.assignedStaffId, (counts.get(p.assignedStaffId) ?? 0) + 1);
+    return staff
+      .filter((s) => counts.has(s.id))
+      .map((s) => ({ id: s.id, name: s.fullName, count: counts.get(s.id) ?? 0 }))
+      .sort((a, b) => (a.id === user?.staffMemberId ? -1 : b.id === user?.staffMemberId ? 1 : a.name.localeCompare(b.name)));
+  }, [inStatus, staff, user?.staffMemberId]);
+  const unassignedCount = useMemo(() => inStatus.filter((p) => !p.assignedStaffId).length, [inStatus]);
+
   const byProgram = useMemo(() => {
     const map = new Map<string, { name: string; slug: string; rows: PerStarPlanDto[] }>();
-    for (const p of plans.filter((x) => starStatusMatches(x.status, statusFilter))) {
+    for (const p of inStatus
+      .filter((x) => tierFilter === null || x.primaryTier === tierFilter)
+      .filter((x) => staffFilter === "" || (staffFilter === "__none__" ? !x.assignedStaffId : x.assignedStaffId === staffFilter))) {
       if (!map.has(p.programId)) map.set(p.programId, { name: p.programName || "No program", slug: p.programSlug, rows: [] });
       map.get(p.programId)!.rows.push(p);
     }
     for (const g of map.values()) g.rows.sort((a, b) => a.participantName.localeCompare(b.participantName));
     return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [plans, statusFilter]);
+  }, [inStatus, tierFilter, staffFilter]);
+
+  const visibleCount = byProgram.reduce((n, g) => n + g.rows.length, 0);
 
   return (
     <div className="adm-main">
@@ -104,9 +131,26 @@ export default function PlanningPage() {
           <span>Each star&apos;s monthly priorities — their primary tier, the objective area &amp; sub-skill to focus on, a goal with a +1 growing edge, and how staff will support it. Changes save automatically.</span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: "var(--space-3)" }}>
-          <span className="ss-label" style={{ color: "var(--fg-tertiary)", marginRight: 2 }}>Program</span>
-          <ProgramPills programs={programs} value={programId} onChange={setProgramId} allLabel="All" compact />
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <span className="ss-label" style={{ color: "var(--fg-tertiary)", marginRight: 2 }}>Program</span>
+            <ProgramPills programs={programs} value={programId} onChange={setProgramId} allLabel="All" compact />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <span className="ss-label" style={{ color: "var(--fg-tertiary)", marginRight: 2 }}>Assigned staff</span>
+            <button type="button" className={`ss-chip${staffFilter === "" ? " is-active" : ""}`} aria-pressed={staffFilter === ""} style={{ cursor: "pointer" }} onClick={() => setStaffFilter("")}>Everyone</button>
+            {staffChoices.map((s) => (
+              <button key={s.id} type="button" className={`ss-chip${staffFilter === s.id ? " is-active" : ""}`} aria-pressed={staffFilter === s.id} style={{ cursor: "pointer" }} onClick={() => setStaffFilter(staffFilter === s.id ? "" : s.id)}>
+                {s.id === user?.staffMemberId ? "My stars" : s.name}<span style={{ opacity: 0.7, marginLeft: 4 }}>{s.count}</span>
+              </button>
+            ))}
+            {unassignedCount > 0 && (
+              <button type="button" className={`ss-chip${staffFilter === "__none__" ? " is-active" : ""}`} aria-pressed={staffFilter === "__none__"} style={{ cursor: "pointer" }} onClick={() => setStaffFilter(staffFilter === "__none__" ? "" : "__none__")}>
+                Unassigned<span style={{ opacity: 0.7, marginLeft: 4 }}>{unassignedCount}</span>
+              </button>
+            )}
+          </div>
+          <TierFilter value={tierFilter} onChange={setTierFilter} counts={tierCounts} />
         </div>
 
         {error ? (
@@ -115,6 +159,8 @@ export default function PlanningPage() {
           <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>Loading…</div>
         ) : plans.length === 0 ? (
           <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>No stars.</div>
+        ) : visibleCount === 0 ? (
+          <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>No stars match these filters.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
             {byProgram.map((prog) => (
@@ -150,6 +196,9 @@ export default function PlanningPage() {
                                 <option value={plan.assignedStaffId}>{plan.assignedStaffName ?? "Former staff"} (former)</option>
                               )}
                             </select>
+                            {plan.assignedStaffSource === "Roster" && (
+                              <div style={{ fontSize: 11, color: "var(--fg-tertiary)", marginTop: 3 }} title="Set on the Roster page for this quarter; pick a name here to override it for this month.">From the Roster this quarter</div>
+                            )}
                           </div>
                           <div>
                             <Label>Priority area</Label>

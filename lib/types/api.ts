@@ -528,6 +528,8 @@ export interface PerStarPlanDto {
   planId: Guid | null;
   assignedStaffId: Guid | null;
   assignedStaffName: string | null;
+  /** "Plan" when the plan names someone, "Roster" when it is the quarter's roster default. */
+  assignedStaffSource: "Plan" | "Roster" | null;
   primaryTier: ProgressLevel;
   priorityObjectiveAreaId: Guid | null;
   priorityObjectiveAreaName: string | null;

@@ -7,6 +7,8 @@ import { useMyPrograms, useParticipants, useObjectiveAreas, useStaff } from "@/l
 import { progressApi } from "@/lib/api/progress";
 import { describeApiError } from "@/lib/api/client";
 import { rosterApi } from "@/lib/api/roster";
+import { planningApi } from "@/lib/api/planning";
+import TierFilter from "../components/TierFilter";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { programTint } from "@/lib/programColor";
 import { Skeleton } from "../components/Skeleton";
@@ -22,6 +24,8 @@ import type {
   DataScore,
   StaffSummaryDto,
   RosterEntryDto,
+  PerStarPlanDto,
+  ProgressLevel,
 } from "@/lib/types/api";
 
 const DAY_ORDER = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -93,6 +97,7 @@ export default function WeeklyDataPage() {
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [week, setWeek] = useState(1);
   const [statusFilter, setStatusFilter] = useState<StarStatusFilterValue>(DEFAULT_STAR_STATUS_FILTER);
+  const [tierFilter, setTierFilter] = useState<ProgressLevel | null>(null);
 
   // The term's roster: which staff member each star is assigned to. A management user sees
   // the whole roster, a teacher their programs' (the API scopes it).
@@ -106,19 +111,33 @@ export default function WeeklyDataPage() {
       .catch(() => setAssignments([]));
   }, [term]);
 
+  // The month's Per-Star Plans: teachers cannot edit the Roster, so the "Assigned staff" they
+  // set on Per-Star Planning is the assignment that actually exists for many stars — and the
+  // plan's primary tier is what the Tier chips filter on.
+  const [plans, setPlans] = useState<PerStarPlanDto[] | null>(null);
+  useEffect(() => {
+    let active = true;
+    planningApi.getPerStar(month)
+      .then((d) => { if (active) setPlans(d); })
+      .catch(() => { if (active) setPlans([]); });
+    return () => { active = false; };
+  }, [month]);
+  const tierByStar = useMemo(() => new Map((plans ?? []).map((p) => [p.participantId, p.primaryTier])), [plans]);
+
   const programIdByName = useMemo(() => new Map(programs.map((p) => [p.name, p.id])), [programs]);
 
-  // A staff member's stars: their roster assignments this term when they have any, otherwise
-  // every star in the programs they teach. The roster is the precise answer; the program
-  // fallback keeps the filter useful in a quarter nobody has filled the roster in for —
-  // which, at the start of every term, is all of them.
+  // A staff member's stars: their roster assignments this term plus the month's Per-Star
+  // Planning assignments (the plan already carries the roster default, so either source
+  // counts). Otherwise every star in the programs they teach — the fallback keeps the
+  // filter useful in a term nobody has assigned anyone in yet.
   const starsByStaff = useMemo(() => {
     const map = new Map<string, StaffScope>();
     for (const m of staff) {
       if (m.isFormer) continue;
-      const roster = new Set(
-        (assignments ?? []).filter((a) => a.assignedStaffId === m.id).map((a) => a.participantId)
-      );
+      const roster = new Set([
+        ...(assignments ?? []).filter((a) => a.assignedStaffId === m.id).map((a) => a.participantId),
+        ...(plans ?? []).filter((p) => p.assignedStaffId === m.id).map((p) => p.participantId),
+      ]);
       if (roster.size > 0) { map.set(m.id, { ids: roster, fromRoster: true }); continue; }
 
       const progIds = new Set(m.programNames.map((n) => programIdByName.get(n)).filter((id): id is string => !!id));
@@ -131,7 +150,7 @@ export default function WeeklyDataPage() {
       map.set(m.id, { ids, fromRoster: false });
     }
     return map;
-  }, [staff, assignments, allParticipants, programIdByName]);
+  }, [staff, assignments, plans, allParticipants, programIdByName]);
 
   // Staff who have stars to show, the signed-in user first.
   const staffChoices = useMemo(
@@ -161,11 +180,12 @@ export default function WeeklyDataPage() {
         stars: allParticipants
           .filter((p) => (p.programId === program.id || p.secondaryProgramId === program.id))
           .filter((p) => starStatusMatches(p.status, statusFilter))
+          .filter((p) => tierFilter === null || tierByStar.get(p.id) === tierFilter)
           .filter((p) => !staffScope || staffScope.ids.has(p.id))
           .sort((a, b) => a.fullName.localeCompare(b.fullName)),
       }))
       .filter((g) => g.stars.length > 0 || programFilter !== null),
-    [programsInView, allParticipants, staffScope, programFilter, statusFilter]
+    [programsInView, allParticipants, staffScope, programFilter, statusFilter, tierFilter, tierByStar]
   );
 
   // Focus skills per program (all weeks of the month) and every score for the stars in view.
@@ -257,6 +277,7 @@ export default function WeeklyDataPage() {
   const changeStaff = guarded(setStaffFilter);
   const changeProgram = guarded(setProgramFilter);
   const changeStatus = guarded(setStatusFilter);
+  const changeTier = guarded(setTierFilter);
 
   // Focus-skill editing — one program at a time.
   const [editingProgramId, setEditingProgramId] = useState<string | null>(null);
@@ -306,7 +327,7 @@ export default function WeeklyDataPage() {
               const scope = starsByStaff.get(m.id)!;
               return (
                 <button key={m.id} type="button" className={`ss-chip${staffFilter === m.id ? " is-active" : ""}`} aria-pressed={staffFilter === m.id} style={{ cursor: "pointer" }} onClick={() => changeStaff(staffFilter === m.id ? "" : m.id)}
-                  title={scope.fromRoster ? `${scope.ids.size} assigned on the roster this term` : `${scope.ids.size} in the programs they teach`}>
+                  title={scope.fromRoster ? `${scope.ids.size} assigned on the Roster or in Per-Star Planning` : `${scope.ids.size} in the programs they teach`}>
                   {m.id === user?.staffMemberId ? "My stars" : m.fullName}
                   <span style={{ opacity: 0.7, marginLeft: 4 }}>{scope.ids.size}</span>
                 </button>
@@ -314,18 +335,19 @@ export default function WeeklyDataPage() {
             })}
           </div>
           <div style={{ fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)" }}>
-            Teacher assignments are set each quarter on the <Link href="/roster" style={{ color: "var(--primary)" }}>Roster</Link> page (the &ldquo;Assigned staff&rdquo; column). A teacher&apos;s chip shows those stars.
+            A teacher&apos;s chip shows the stars assigned to them on the <Link href="/roster" style={{ color: "var(--primary)" }}>Roster</Link> this quarter or in <Link href="/planning" style={{ color: "var(--primary)" }}>Per-Star Planning</Link> this month.
           </div>
           {staffScope && !staffScope.fromRoster && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)" }}>
               <Info style={{ width: 13, height: 13, flexShrink: 0 }} />
-              No stars are assigned to {staffName} on the Roster this term, so this shows every star in the programs they teach. Set assignments on the Roster page to narrow it.
+              No stars are assigned to {staffName} on the Roster this quarter or in Per-Star Planning this month, so this shows every star in the programs they teach. Set &ldquo;Assigned staff&rdquo; on either page to narrow it.
             </div>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <span className="ss-label" style={{ color: "var(--fg-tertiary)", marginRight: 2 }}>Program</span>
             <ProgramPills programs={programs} value={programFilter} onChange={changeProgram} allLabel="All programs" compact />
           </div>
+          <TierFilter value={tierFilter} onChange={changeTier} />
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <span className="ss-label" style={{ color: "var(--fg-tertiary)", marginRight: 2 }}>Week</span>
             {WEEKS.map((w) => (
@@ -355,8 +377,8 @@ export default function WeeklyDataPage() {
         ) : totalStars === 0 ? (
           <div style={{ padding: "24px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>
             {staffFilter
-              ? `No stars for ${staffName}${programFilter ? " in this program" : ""}. Choose “All stars”, or set assignments on the Roster page.`
-              : "No stars in this program yet."}
+              ? `No stars for ${staffName}${programFilter ? " in this program" : ""}${tierFilter ? " at this tier" : ""}. Choose “All stars”, or set assignments on the Roster or Per-Star Planning page.`
+              : tierFilter ? "No stars at this tier — tiers are set on Per-Star Planning." : "No stars in this program yet."}
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
