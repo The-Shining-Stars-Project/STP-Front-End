@@ -263,6 +263,7 @@ export function EditUserModal({
   onSaved: (u: UserDto) => void;
 }) {
   const [fullName, setFullName] = useState(target.fullName);
+  const [email, setEmail] = useState(target.email);
   const [role, setRole] = useState<UserRole>(target.role);
   useEscapeKey(onClose);
   const panelRef = useDialogFocus<HTMLDivElement>();
@@ -273,14 +274,18 @@ export function EditUserModal({
   const [saving, setSaving] = useState(false);
 
   const staffDirty = staffMemberId !== (target.staffMemberId ?? "");
-  const dirty = fullName.trim() !== target.fullName || role !== target.role || isActive !== target.isActive || staffDirty;
-  const canSubmit = fullName.trim().length > 0 && dirty;
+  const normalisedEmail = email.trim().toLowerCase();
+  const emailDirty = normalisedEmail !== target.email;
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalisedEmail);
+  const dirty = fullName.trim() !== target.fullName || emailDirty || role !== target.role || isActive !== target.isActive || staffDirty;
+  const canSubmit = fullName.trim().length > 0 && emailValid && dirty;
 
   async function handleSubmit() {
     setSaving(true);
     setError(null);
     const dto: UpdateUserDto = {
       fullName: fullName.trim(), role, isActive,
+      ...(emailDirty ? { email: normalisedEmail } : {}),
       ...(staffDirty ? (staffMemberId ? { staffMemberId } : { clearStaffMember: true }) : {}),
     };
     try {
@@ -318,7 +323,7 @@ export function EditUserModal({
               </select>
               <div style={{ fontSize: 12, color: staffMemberId ? "var(--fg-tertiary)" : "var(--warning-text, var(--warning))", marginTop: 6 }}>
                 {staffMemberId
-                  ? "Stars, classes and rosters this login sees come from the programs this staff record is assigned to (Programs page → Manage staff)."
+                  ? "Stars, classes and rosters this login sees come from the programs this staff record is assigned to (Onboarding → open the person → Edit details, or Programs page → Manage staff)."
                   : "Not linked: this login will see no stars, classes or rosters."}
               </div>
             </div>
@@ -326,6 +331,17 @@ export function EditUserModal({
           <div>
             <label className="ss-label" htmlFor="eu-name" style={{ display: "block", marginBottom: 6 }}>Full name</label>
             <input id="eu-name" type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} style={inputStyle} />
+          </div>
+
+          <div>
+            <label className="ss-label" htmlFor="eu-email" style={{ display: "block", marginBottom: 6 }}>Email</label>
+            <input id="eu-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} autoComplete="off" />
+            {email.length > 0 && !emailValid && (
+              <div style={{ marginTop: 4, fontSize: 11, color: "var(--danger)" }}>Enter a valid email address.</div>
+            )}
+            {emailDirty && emailValid && (
+              <div style={{ marginTop: 4, fontSize: 11, color: "var(--fg-tertiary)" }}>They will sign in with the new address from now on; the password is unchanged.</div>
+            )}
           </div>
 
           <div>

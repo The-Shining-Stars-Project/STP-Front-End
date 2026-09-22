@@ -837,6 +837,7 @@ function StaffPageInner() {
         <EditStaffModal
           key={editing.id}
           member={editing}
+          programs={programs}
           onClose={() => setEditing(null)}
           onSave={(dto) => handleEditSave(editing, dto)}
         />

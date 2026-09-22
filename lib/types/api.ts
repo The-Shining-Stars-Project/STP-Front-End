@@ -60,6 +60,8 @@ export interface UserDto {
 
 export interface UpdateUserDto {
   fullName?: string;
+  /** New sign-in address; 409 if another account owns it. */
+  email?: string;
   role?: UserRole;
   isActive?: boolean;
   staffMemberId?: Guid;
@@ -700,6 +702,7 @@ export interface StaffSummaryDto {
   tShirtSize: string | null;
   onboardingProgressPct: number;
   programNames: string[];
+  programIds: Guid[];
   /** Training/paperwork expiring within 60 days or already expired. Admin-only (empty for others). */
   trainingAlerts: TrainingAlertDto[];
 }

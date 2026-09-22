@@ -406,14 +406,18 @@ export function AddStaffModal({
 
 export function EditStaffModal({
   member,
+  programs,
   onClose,
   onSave,
 }: {
   member: StaffSummaryDto;
+  programs: ProgramSummaryDto[];
   onClose: () => void;
   onSave: (dto: UpdateStaffDto) => Promise<void>;
 }) {
   const [fullName, setFullName] = useState(member.fullName);
+  const [programIds, setProgramIds] = useState<string[]>(member.programIds ?? []);
+  const sameIds = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
   const [initials, setInitials] = useState(member.initials);
   const [role, setRole] = useState<StaffRole>(member.role);
   const [startDate, setStartDate] = useState(member.startDate);
@@ -423,6 +427,10 @@ export function EditStaffModal({
   useEscapeKey(onClose);
   const panelRef = useDialogFocus<HTMLDivElement>();
 
+  // Only block an ACTIVE member being stripped of every program (their login would see nothing).
+  // A record that already has none, or a former member, can still have its name or role fixed.
+  const programsChanged = !sameIds(programIds, member.programIds ?? []);
+  const programsBlocked = programsChanged && programIds.length === 0 && !member.isFormer;
   const trimmedName = fullName.trim();
   const trimmedInitials = initials.trim();
   const dto: UpdateStaffDto = {
@@ -431,9 +439,10 @@ export function EditStaffModal({
     ...(role !== member.role ? { role } : {}),
     ...(startDate && startDate !== member.startDate ? { startDate } : {}),
     ...(tShirtSize !== (member.tShirtSize ?? "") ? { tShirtSize } : {}),
+    ...(programsChanged ? { programIds } : {}),
   };
   const dirty = Object.keys(dto).length > 0;
-  const canSave = dirty && trimmedName.length > 0 && trimmedInitials.length > 0 && trimmedInitials.length <= 10 && !saving;
+  const canSave = dirty && trimmedName.length > 0 && trimmedInitials.length > 0 && trimmedInitials.length <= 10 && !programsBlocked && !saving;
 
   async function submit() {
     if (!canSave) return;
@@ -464,7 +473,7 @@ export function EditStaffModal({
           <div>
             <h3 style={{ fontSize: 15, fontWeight: 500, margin: "0 0 2px" }}>Edit staff member</h3>
             <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>
-              {member.isFormer ? "Former staff member — their checklist history stays as it is." : "Programs are managed from each program's page; the checklist is below the row."}
+              {member.isFormer ? "Former staff member — their checklist history stays as it is." : "Programs decide which stars, classes and rosters their login can see."}
             </div>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4, borderRadius: "var(--r-sm)" }}>
@@ -493,6 +502,27 @@ export function EditStaffModal({
                 </button>
               ))}
             </div>
+          </div>
+
+          <div>
+            <div className="ss-label" style={{ marginBottom: 8 }}>Programs <span style={{ color: "var(--danger)", fontWeight: 400 }}>*</span></div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {programs.map((p) => {
+                const checked = programIds.includes(p.id);
+                return (
+                  <label key={p.id} style={{ ...programPillStyle(p.colorHex, checked), padding: "5px 11px", userSelect: "none", cursor: "pointer" }}>
+                    <input type="checkbox" style={{ display: "none" }} checked={checked}
+                      onChange={(e) => setProgramIds((ids) => e.target.checked ? [...ids, p.id] : ids.filter((x) => x !== p.id))} />
+                    <span className="ss-dot" style={{ background: programTint(p.colorHex).accent }} />
+                    {p.name}
+                  </label>
+                );
+              })}
+            </div>
+            {programsBlocked && <div style={{ marginTop: 4, fontSize: 11, color: "var(--danger)" }}>Pick at least one program, or their login sees nothing.</div>}
+            {!programsBlocked && programIds.length === 0 && !member.isFormer && (
+              <div style={{ marginTop: 4, fontSize: 11, color: "var(--warning-text, var(--warning))" }}>No programs yet — their login sees no stars, classes or rosters until one is ticked.</div>
+            )}
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
