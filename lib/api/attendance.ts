@@ -17,6 +17,8 @@ export const attendanceApi = {
   openProgramSession: (programId: string, date?: string)  => api.post<SessionRosterDto>("/api/attendance/session", { programId, date }),
   /** Finalizes a session, locking its records. */
   submitSession: (sessionId: string)                      => api.post<void>(`/api/attendance/session/${sessionId}/submit`, {}),
+  /** Unlocks a submitted session (management only) so a late arrival or mis-tap can be fixed. Audited. */
+  reopenSession: (sessionId: string)                      => api.post<void>(`/api/attendance/session/${sessionId}/reopen`, {}),
   /** Records the session's total hours (Pathways attendance-time reporting). */
   setSessionHours: (sessionId: string, hours: number | null) => api.put<void>(`/api/attendance/session/${sessionId}/hours`, { hours }),
 

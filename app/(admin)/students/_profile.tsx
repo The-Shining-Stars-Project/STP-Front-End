@@ -304,7 +304,7 @@ export default function ParticipantProfile({ id }: { id: string }) {
   const slug = detail.programSlug;
   const badge = STATUS_BADGE[detail.status];
   const BadgeIcon = badge.icon;
-  const reportDue = nextPathwaysReportDue(detail.startDate, slug);
+  const reportDue = nextPathwaysReportDue(detail.startDate, detail.programTrack);
 
   // ── View / edit fields ──────────────────────────────────────────────────────
   // Expiry within a month shows amber; past-due shows red — matches the client's
@@ -668,13 +668,16 @@ export default function ParticipantProfile({ id }: { id: string }) {
           <ArtsProfileWidget participantId={id} />
 
           {/* weekly tracker (monthly data + month-end levels) — framework follows enrollment */}
+          {/* The program's Track setting decides the framework (no more slug guessing). Pathways
+              leads when a star is dual-enrolled — the profile shows Pathways data, and the
+              Part-time grid is one chip away here or on the Weekly Data page (client, Sep 2026). */}
           <TrackerWidget
+            key={`${detail.programTrack}-${detail.secondaryProgramTrack ?? ""}`}
             participantId={id}
             tracks={[...new Set(
-              [detail.programSlug, detail.secondaryProgramSlug]
-                .filter((s): s is string => !!s)
-                .map((s) => (s === "pathways" ? "Pathways" : "PartTime") as import("@/lib/types/api").ProgramTrack)
-            )]}
+              [detail.programTrack, detail.secondaryProgramTrack]
+                .filter((t): t is import("@/lib/types/api").ProgramTrack => !!t)
+            )].sort((a, b) => (a === "Pathways" ? -1 : b === "Pathways" ? 1 : 0))}
           />
 
           {/* documents — intake paperwork with attached scans. Admin-only (client rule): the

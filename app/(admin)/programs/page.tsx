@@ -9,7 +9,7 @@ import { programsApi } from "@/lib/api/programs";
 import { useMyPrograms, queryKeys } from "@/lib/api/hooks";
 import LoadError from "@/app/components/LoadError";
 import { ApiError } from "@/lib/api/client";
-import type { ProgramSummaryDto, CreateProgramDto, UpdateProgramDto } from "@/lib/types/api";
+import type { ProgramSummaryDto, CreateProgramDto, UpdateProgramDto, ProgramTrack } from "@/lib/types/api";
 
 // ── Color palette ─────────────────────────────────────────────────────────────
 
@@ -75,6 +75,7 @@ type ProgramCard = {
   color: ProgramColor;
   // editable schedule fields
   meetingDays: string;
+  track: ProgramTrack;
   startTime: string | null;
   endTime: string | null;
   location: string;
@@ -93,6 +94,7 @@ function dtoToCard(dto: ProgramSummaryDto): ProgramCard {
     alertCount: dto.alertCount,
     color: colorFromHex(dto.colorHex),
     meetingDays: dto.meetingDays ?? "None",
+    track: dto.track ?? "PartTime",
     startTime: dto.startTime,
     endTime: dto.endTime,
     location: dto.defaultLocation ?? "",
@@ -101,16 +103,17 @@ function dtoToCard(dto: ProgramSummaryDto): ProgramCard {
 
 // ── Program form (create + edit) ───────────────────────────────────────────────
 
-type ProgForm = { name: string; colorKey: string; days: string[]; start: string; end: string; location: string };
+type ProgForm = { name: string; colorKey: string; days: string[]; start: string; end: string; location: string; track: ProgramTrack };
 
 function emptyForm(): ProgForm {
-  return { name: "", colorKey: "", days: [], start: "", end: "", location: "" };
+  return { name: "", colorKey: "", days: [], start: "", end: "", location: "", track: "PartTime" };
 }
 function formFromCard(c: ProgramCard): ProgForm {
   return {
     name: c.label,
     colorKey: c.color.key,
     days: parseDays(c.meetingDays),
+    track: c.track,
     start: hhmm(c.startTime),
     end: hhmm(c.endTime),
     location: c.location,
@@ -229,6 +232,30 @@ function ProgramFormModal({
             </div>
           </div>
 
+          {/* Track — which weekly-data framework the program's stars are scored on */}
+          <div>
+            <div className="ss-label" style={{ marginBottom: 8 }}>
+              Progress framework{" "}
+              <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>
+                Which criteria appear on Weekly Data and star profiles
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              {([["PartTime", "Part-time"], ["Pathways", "Pathways"]] as [ProgramTrack, string][]).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`ss-chip${form.track === key ? " is-active" : ""}`}
+                  aria-pressed={form.track === key}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => setForm((f) => ({ ...f, track: key }))}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Times */}
           <div style={{ display: "flex", gap: "var(--space-4)", flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 130 }}>
@@ -299,6 +326,7 @@ export default function ProgramsPage() {
       name: form.name.trim(),
       colorHex,
       meetingDays: days.length ? days.join(", ") : "None",
+      track: form.track,
       startTime: form.start ? `${form.start}:00` : undefined,
       endTime: form.end ? `${form.end}:00` : undefined,
       sessionSchedule: days.length ? scheduleLabel(days) : undefined,

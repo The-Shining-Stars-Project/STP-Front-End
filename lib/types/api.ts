@@ -230,6 +230,8 @@ export interface ProgramSummaryDto {
   defaultLocation: string | null;
   /** Flags enum serialized as comma-separated names, e.g. "Monday, Wednesday, Friday" or "None". */
   meetingDays: string;
+  /** Which weekly-data framework this program's stars use. */
+  track: ProgramTrack;
   /** "HH:mm:ss" or null. */
   startTime: string | null;
   endTime: string | null;
@@ -247,6 +249,7 @@ export interface ProgramDetailDto {
   colorHex: string;
   sessionSchedule: string | null;
   defaultLocation: string | null;
+  track: ProgramTrack;
   enrolledCount: number;
   attendancePct: number | null;
   participants: ParticipantSummaryDto[];
@@ -268,6 +271,7 @@ export interface CreateProgramDto {
   defaultLocation?: string;
   /** Comma-separated day names ("Monday, Wednesday, Friday") or "None". */
   meetingDays?: string;
+  track?: ProgramTrack;
   /** "HH:mm:ss". */
   startTime?: string;
   endTime?: string;
@@ -279,6 +283,7 @@ export interface UpdateProgramDto {
   sessionSchedule?: string;
   defaultLocation?: string;
   meetingDays: string;
+  track?: ProgramTrack;
   startTime?: string;
   endTime?: string;
 }
@@ -295,6 +300,7 @@ export interface ParticipantSummaryDto {
   programId: Guid;
   programName: string;
   programSlug: string;
+  programTrack: ProgramTrack;
   attendancePct: number;
   startDate: string;
   hasDocAlerts: boolean;
@@ -332,6 +338,7 @@ export interface ParticipantSummaryDto {
   secondaryProgramId: Guid | null;
   secondaryProgramName: string | null;
   secondaryProgramSlug: string | null;
+  secondaryProgramTrack: ProgramTrack | null;
 }
 
 export interface ParticipantDetailDto extends ParticipantSummaryDto {
@@ -835,6 +842,7 @@ export interface SessionRosterDto {
   sessionId: Guid;
   programId: Guid;
   programSlug: string;
+  programTrack: ProgramTrack;
   programName: string;
   colorHex: string;
   date: string;

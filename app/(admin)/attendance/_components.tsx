@@ -18,6 +18,7 @@ import {
   MapPin,
   Plus,
   Lock,
+  Unlock,
   CalendarClock,
   CalendarOff,
   type LucideIcon,
@@ -288,7 +289,7 @@ export function AdHocStarter({
 export function RosterView({
   selected, locked, total, present, absent, marked, rescheduled = 0, notScheduled = 0, canManage = false,
   filter, setFilter, query, setQuery, visibleEntries, loadingRoster,
-  onBack, onMark, onOpenNote, onSubmit, submitting, th,
+  onBack, onMark, onOpenNote, onSubmit, onReopen, submitting, th,
 }: {
   selected: SessionRosterDto;
   locked: boolean;
@@ -304,6 +305,8 @@ export function RosterView({
   onMark: (recordId: string, target: AttendanceStatus) => void;
   onOpenNote: (recordId: string) => void;
   onSubmit: () => void;
+  /** Unlocks a submitted session. Shown to management only. */
+  onReopen?: () => void;
   submitting: boolean;
   th: React.CSSProperties;
 }) {
@@ -368,7 +371,7 @@ export function RosterView({
                   <MapPin style={{ width: 12, height: 12 }} />{selected.room}
                 </span>
               )}
-              {selected.programSlug === "pathways" && (
+              {selected.programTrack === "Pathways" && (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                   <Clock style={{ width: 12, height: 12 }} />
                   Hours
@@ -536,10 +539,18 @@ export function RosterView({
             {!locked && <span style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>· changes save automatically</span>}
           </div>
           {locked ? (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13, color: "var(--success-text, var(--success))" }}>
-              <Check style={{ width: 14, height: 14 }} />Attendance submitted
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 10, fontSize: 13, color: "var(--success-text, var(--success))" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <Check style={{ width: 14, height: 14 }} />Attendance submitted
+              </span>
+              {canManage && onReopen && (
+                <button className="ss-btn" type="button" disabled={submitting} onClick={onReopen} title="Unlock this session to correct attendance (recorded in the audit log)">
+                  {submitting ? <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} /> : <Unlock className="ss-btn-icon" />}
+                  Reopen for edits
+                </button>
+              )}
             </span>
-          ) : (
+          ) : canManage ? (
             <button
               className="ss-btn ss-btn-primary"
               disabled={total === 0 || marked < total || submitting}
@@ -548,6 +559,12 @@ export function RosterView({
               {submitting ? <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} /> : <Check className="ss-btn-icon" />}
               {submitting ? "Submitting…" : "Submit attendance"}
             </button>
+          ) : (
+            // Teachers mark; a coordinator or admin finalizes (client rule, Sep 2026) — a
+            // teacher submitting the moment every star was marked left late arrivals unfixable.
+            <span style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>
+              {marked < total ? `${total - marked} still to mark` : "Marked — a coordinator will submit"}
+            </span>
           )}
         </div>
       </div>

@@ -12,8 +12,8 @@ export type PathwaysReportDue = {
  * Pathways stars owe a progress report 6 and 12 months after their start date, then
  * every 6 months onward. Returns the next upcoming due date (never in the past).
  */
-export function nextPathwaysReportDue(startDate: string, programSlug: string): PathwaysReportDue | null {
-  if (programSlug !== "pathways" || !startDate) return null;
+export function nextPathwaysReportDue(startDate: string, programTrack: string): PathwaysReportDue | null {
+  if (programTrack !== "Pathways" || !startDate) return null;
   const start = parseLocalDate(startDate);
   if (Number.isNaN(start.getTime())) return null;
 

@@ -159,7 +159,7 @@ export default function DashboardPage() {
     for (const p of participants) {
       if (items.length >= 6) break;
       if (p.status !== "Active" && p.status !== "Attention") continue;
-      const due = nextPathwaysReportDue(p.startDate, p.programSlug);
+      const due = nextPathwaysReportDue(p.startDate, p.programTrack);
       if (!due || due.daysUntil > 31) continue;
       items.push({
         severity: "warning",

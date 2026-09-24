@@ -128,7 +128,10 @@ export default function AttendancePage() {
     const entry = selected.entries.find((e) => e.recordId === recordId);
     if (!entry) return;
     const prev = entry.status;
-    const next: AttendanceStatus = prev === target ? "Unmarked" : target;
+    // Tapping the selected status no longer clears it to Unmarked: on an iPad a double-tap on
+    // Present read as "it didn't take" (client, Sep 2026). A second tap is simply a no-op.
+    if (prev === target) return;
+    const next: AttendanceStatus = target;
 
     setSelected((s) =>
       s ? { ...s, entries: s.entries.map((e) => (e.recordId === recordId ? { ...e, status: next } : e)) } : s
@@ -178,6 +181,23 @@ export default function AttendancePage() {
       setSelected((s) => (s ? { ...s, status: "submitted" } : s));
     } catch {
       setError("Couldn't submit attendance. Try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // Management only. Every unlock is audited server-side (attendance.session.reopen), and
+  // every mark that follows is audited as usual — attendance drives funding.
+  async function reopen() {
+    if (!selected) return;
+    if (!window.confirm("Reopen this session for edits? The change is recorded in the audit log.")) return;
+    setSubmitting(true);
+    try {
+      await attendanceApi.reopenSession(selected.sessionId);
+      setSelected((s) => (s ? { ...s, status: "open", submittedAt: null } : s));
+      setError(null);
+    } catch {
+      setError("Couldn't reopen the session. Try again.");
     } finally {
       setSubmitting(false);
     }
@@ -299,6 +319,7 @@ export default function AttendancePage() {
               onMark={mark}
               onOpenNote={openNote}
               onSubmit={submit}
+              onReopen={reopen}
               submitting={submitting}
               th={th}
             />

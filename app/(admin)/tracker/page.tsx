@@ -453,7 +453,7 @@ function ProgramSection({
   const tint = programTint(program.colorHex);
 
   // The program decides which framework's sections the editor offers (Pathways vs part-time).
-  const track = program.slug === "pathways" ? "Pathways" : "PartTime";
+  const track = program.track;
   const sections = areas.filter((a) => a.track === track && a.subSkills.length > 0).sort((a, b) => a.sortOrder - b.sortOrder);
 
   // Coverage for the week in view: who is still missing, where the work actually happens.
