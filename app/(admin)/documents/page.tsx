@@ -156,6 +156,23 @@ export default function DocumentsPage() {
     }
   }
 
+  // Deleting a script was never possible — the trash icon detached the PDF (client, Sep 24).
+  async function deleteScript(script: Script) {
+    if (!script.id) return;
+    if (!window.confirm(`Delete "${script.title}"${script.pdf ? " and its PDF" : ""}? This cannot be undone.`)) return;
+    setPdfNotice(null);
+    setPdfBusyId(script.id);
+    try {
+      await scriptsApi.delete(script.id);
+      setScripts((prev) => prev.filter((s) => s.id !== script.id));
+      setSelectedScript(null);
+    } catch (err) {
+      setPdfNotice({ scriptId: script.id, title: script.title, message: describeError(err) });
+    } finally {
+      setPdfBusyId(null);
+    }
+  }
+
   async function removePdf(script: Script) {
     if (!script.id || !script.pdf) return;
     if (!window.confirm(`Remove "${script.pdf.fileName}" from ${script.title}?`)) return;
@@ -520,6 +537,7 @@ export default function DocumentsPage() {
               : undefined
           }
           onRemovePdf={selectedScript.id ? () => removePdf(selectedScript) : undefined}
+          onDelete={selectedScript.id ? () => deleteScript(selectedScript) : undefined}
           pdfBusy={pdfBusyId !== null && pdfBusyId === selectedScript.id}
           pdfError={pdfNotice && pdfNotice.scriptId === selectedScript.id ? pdfNotice.message : null}
         />

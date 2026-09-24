@@ -1,5 +1,7 @@
 "use client";
 
+import { localMonthKey } from "@/lib/format";
+
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { PenLine, Check, X, Info } from "lucide-react";
@@ -90,12 +92,17 @@ export default function WeeklyDataPage() {
   const allParticipants: ParticipantSummaryDto[] = useParticipants().data ?? [];
   const areas: ObjectiveAreaDto[] = useObjectiveAreas().data ?? [];
   const staff: StaffSummaryDto[] = useStaff().data ?? [];
-  const { user } = useAuth();
+  const { user, canManage } = useAuth();
 
   const [staffFilter, setStaffFilter] = useState<string>("");            // "" = all stars
   const [programFilter, setProgramFilter] = useState<string | null>(null); // null = all programs
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [week, setWeek] = useState(1);
+  const [month, setMonth] = useState(() => localMonthKey());
+  // The chip is the only thing that defines "week" (nothing ties it to a date), so at least
+  // reopen on the one used last — teachers were landing on W1 and reading "no data".
+  const [week, setWeek] = useState(() => {
+    try { const w = Number(window.localStorage.getItem("tracker.week")); return w >= 1 && w <= 5 ? w : 1; } catch { return 1; }
+  });
+  useEffect(() => { try { window.localStorage.setItem("tracker.week", String(week)); } catch { /* ignore */ } }, [week]);
   const [statusFilter, setStatusFilter] = useState<StarStatusFilterValue>(DEFAULT_STAR_STATUS_FILTER);
   const [tierFilter, setTierFilter] = useState<ProgressLevel | null>(null);
 
@@ -395,6 +402,7 @@ export default function WeeklyDataPage() {
                 onScore={editScore}
                 editing={editingProgramId === g.program.id}
                 editorDisabled={editingProgramId !== null && editingProgramId !== g.program.id}
+                canManage={canManage}
                 focusDraft={focusDraft}
                 savingFocus={savingFocus}
                 onOpenEditor={() => openFocusEditor(g.program.id)}
@@ -431,6 +439,7 @@ export default function WeeklyDataPage() {
 function ProgramSection({
   program, stars, week, weekFocus, scores, draft, areas, onScore,
   editing, editorDisabled, focusDraft, savingFocus, onOpenEditor, onToggleDraft, onSetDraft, onSaveFocus, onCancelEditor,
+  canManage = false,
 }: {
   program: ProgramSummaryDto;
   stars: ParticipantSummaryDto[];
@@ -442,6 +451,8 @@ function ProgramSection({
   onScore: (participantId: string, subSkillId: string, score: DataScore | null) => void;
   editing: boolean;
   editorDisabled: boolean;
+  /** Only coordinators and admins may set focus skills (the API is ManagementWrite). */
+  canManage?: boolean;
   focusDraft: Set<string>;
   savingFocus: boolean;
   onOpenEditor: () => void;
@@ -451,6 +462,31 @@ function ProgramSection({
   onCancelEditor: () => void;
 }) {
   const tint = programTint(program.colorHex);
+
+  // Columns: this week's focus skills, PLUS any other sub-skill that already has a score for
+  // one of these stars this week (entered on a star's profile, or under an earlier focus
+  // list). Hiding those made the grid look like data vanished between weeks (client, Sep 24).
+  const subSkillById = useMemo(() => {
+    const m = new Map<string, { id: string; name: string; sortOrder: number; sectionNumber: number }>();
+    for (const a of areas) for (const sk of a.subSkills) m.set(sk.id, sk);
+    return m;
+  }, [areas]);
+  const columns = useMemo(() => {
+    const focusIds = new Set(weekFocus.map((f) => f.subSkillId));
+    const cols: { subSkillId: string; subSkillName: string; isFocus: boolean }[] =
+      weekFocus.map((f) => ({ subSkillId: f.subSkillId, subSkillName: f.subSkillName, isFocus: true }));
+    const extra = new Set<string>();
+    const starIds = new Set(stars.map((p) => p.id));
+    for (const key of scores.keys()) {
+      const [pid, skillId, w] = key.split(":");
+      if (Number(w) === week && starIds.has(pid) && !focusIds.has(skillId)) extra.add(skillId);
+    }
+    for (const id of [...extra].sort((a, b) => {
+      const A = subSkillById.get(a), B = subSkillById.get(b);
+      return (A?.sectionNumber ?? 0) - (B?.sectionNumber ?? 0) || (A?.sortOrder ?? 0) - (B?.sortOrder ?? 0);
+    })) cols.push({ subSkillId: id, subSkillName: subSkillById.get(id)?.name ?? "Skill", isFocus: false });
+    return cols;
+  }, [weekFocus, scores, stars, week, subSkillById]);
 
   // The program decides which framework's sections the editor offers (Pathways vs part-time).
   const track = program.track;
@@ -485,10 +521,15 @@ function ProgramSection({
         <span style={{ width: 10, height: 10, borderRadius: "50%", background: tint.accent, flexShrink: 0 }} />
         <h3 style={{ fontSize: "var(--fs-h3)", fontWeight: "var(--w-medium)", margin: 0, color: tint.text }}>{program.name}</h3>
         <span style={{ fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)" }}>{stars.length} star{stars.length !== 1 ? "s" : ""} · Week {week}</span>
-        {!editing && (
+        {!editing && canManage && (
           <button type="button" className="ss-btn" style={{ marginLeft: "auto" }} onClick={onOpenEditor} disabled={editorDisabled}>
             <PenLine className="ss-btn-icon" />{weekFocus.length ? "Edit focus skills" : "Set focus skills"}
           </button>
+        )}
+        {!editing && !canManage && weekFocus.length === 0 && (
+          <span style={{ marginLeft: "auto", fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)" }} title="Focus skills are set by a coordinator or admin">
+            No focus skills set for this week yet
+          </span>
         )}
       </div>
 
@@ -596,16 +637,21 @@ function ProgramSection({
       {/* Entry grid */}
       {stars.length === 0 ? (
         <div style={{ padding: "20px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>No stars to show for this program.</div>
-      ) : weekFocus.length === 0 ? (
-        <div style={{ padding: "20px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>Set this week&apos;s focus skills above to start entering data.</div>
+      ) : columns.length === 0 ? (
+        <div style={{ padding: "20px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>
+          {canManage ? <>Set this week&apos;s focus skills above to start entering data.</> : <>Nothing scored yet this week — a coordinator sets the week&apos;s focus skills.</>}
+        </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 480 }}>
             <thead>
               <tr style={{ borderBottom: "0.5px solid var(--border)" }}>
                 <th style={{ textAlign: "left", padding: "8px 12px", fontSize: "var(--fs-label)", textTransform: "uppercase", letterSpacing: "var(--ls-label)", color: "var(--fg-tertiary)", fontWeight: "var(--w-regular)" }}>Star</th>
-                {weekFocus.map((f) => (
-                  <th key={f.subSkillId} style={{ padding: "8px 8px", fontSize: "var(--fs-meta)", color: "var(--fg-secondary)", fontWeight: "var(--w-regular)", textAlign: "center", minWidth: 84 }}>{f.subSkillName}</th>
+                {columns.map((f) => (
+                  <th key={f.subSkillId} title={f.isFocus ? "This week's focus skill" : "Scored this week (not a focus skill)"}
+                    style={{ padding: "8px 8px", fontSize: "var(--fs-meta)", color: f.isFocus ? "var(--fg)" : "var(--fg-tertiary)", fontWeight: f.isFocus ? "var(--w-medium)" : "var(--w-regular)", textAlign: "center", minWidth: 84, borderBottom: f.isFocus ? `2px solid ${tint.accent}` : undefined }}>
+                    {f.subSkillName}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -621,7 +667,7 @@ function ProgramSection({
                       )}
                     </span>
                   </td>
-                  {weekFocus.map((f) => {
+                  {columns.map((f) => {
                     const key = scoreKey(p.id, f.subSkillId, week);
                     const pending = draft.has(key);
                     const value = pending ? draft.get(key) ?? "" : scores.get(key) ?? "";

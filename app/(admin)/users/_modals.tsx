@@ -220,7 +220,7 @@ export function CreateUserModal({
                 onChange={(e) => setForm(f => ({ ...f, staffMemberId: e.target.value }))}
                 style={{ ...inputStyle, appearance: "auto" }}>
                 <option value="">Not linked</option>
-                {staff.map((s) => (
+                {staff.filter((s) => !s.isFormer || s.id === form.staffMemberId).map((s) => (
                   <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
                 ))}
               </select>
@@ -317,7 +317,7 @@ export function EditUserModal({
               <select id="eu-staff" value={staffMemberId} onChange={(e) => setStaffMemberId(e.target.value)}
                 style={{ width: "100%", boxSizing: "border-box", border: "0.5px solid var(--border-hover)", borderRadius: "var(--r-md)", padding: "8px 12px", fontSize: 13, color: "var(--fg)", background: "var(--surface)", outline: "none", appearance: "auto" }}>
                 <option value="">Not linked</option>
-                {staff.map((m) => (
+                {staff.filter((m) => !m.isFormer).map((m) => (
                   <option key={m.id} value={m.id}>{staffOptionLabel(m)}</option>
                 ))}
               </select>

@@ -27,4 +27,7 @@ export const scriptsApi = {
 
   /** Detaches and deletes the PDF. Idempotent. */
   deletePdf: (id: string) => api.delete<ScriptDto>(`/api/scripts/${id}/pdf`),
+
+  /** Deletes the script outright, PDF included. Management only. */
+  delete: (id: string) => api.delete<void>(`/api/scripts/${id}`),
 };

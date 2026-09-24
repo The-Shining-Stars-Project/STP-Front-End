@@ -30,7 +30,6 @@ const ADMIN_ONLY_PREFIXES = [
   "/users",
   "/staff",
   "/reports",
-  "/cohort-rollup",
   "/settings",
   "/audit",
 ];

@@ -1275,6 +1275,8 @@ export interface RosterEntryDto {
   /** Every site the Star attends this term, primary first. */
   siteIds: Guid[];
   siteNames: string[];
+  /** True when this row is the Star's secondary enrolment ("also enrolled in"). */
+  isSecondaryEnrollment: boolean;
   starGroupId: Guid | null;
   starGroupName: string | null;
   assignedStaffId: Guid | null;
@@ -1287,6 +1289,8 @@ export interface RosterEntryDto {
 
 export interface UpsertRosterAssignmentDto {
   participantId: Guid;
+  /** Which enrolment to place. Omitted = the Star's primary program. */
+  programId?: Guid;
   quarter: number;
   year: number;
   /** Single-site form, still accepted; ignored when siteIds is given. */

@@ -8,6 +8,7 @@ import {
   Users, CalendarCheck, AlertCircle, AlertTriangle,
   Minus, Check, Clock, X,
   UserCheck, CheckCircle2, UserPlus, UserMinus,
+  type LucideIcon,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { programsApi } from "@/lib/api/programs";
@@ -82,7 +83,7 @@ function ManageStaffModal({
             <div style={{ padding: "20px 0", textAlign: "center", fontSize: 13, color: "var(--fg-tertiary)" }}>
               No staff yet — add staff members on the Staff page first.
             </div>
-          ) : allStaff.map((s) => {
+          ) : allStaff.filter((s) => !s.isFormer).map((s) => {
             const isAssigned = assignedIds.has(s.id);
             const busy = busyId === s.id;
             return (
@@ -128,6 +129,18 @@ function ManageStaffModal({
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+// The old badge knew Active/Attention and called everything else "Prospective" — a Former
+// star read as "Former" in small text under a "Prospective" badge (client, Sep 24).
+const STATUS_BADGE: Record<string, { cls: string; icon: LucideIcon; label: string }> = {
+  Active:        { cls: "is-active",        icon: CheckCircle2, label: "Active" },
+  Prospective:   { cls: "is-prospective",   icon: Clock,        label: "Prospective" },
+  Attention:     { cls: "is-attention",     icon: AlertTriangle, label: "Attention" },
+  Former:        { cls: "is-former",        icon: Minus,        label: "Former" },
+  AuthPending:   { cls: "is-authpending",   icon: Clock,        label: "Auth pending" },
+  Inquiry:       { cls: "is-inquiry",       icon: Clock,        label: "Inquiry" },
+  NotInterested: { cls: "is-notinterested", icon: Minus,        label: "Not interested" },
+};
+
 export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
   // Cached per-slug via React Query (#34); revisiting a program is instant.
   const detailQ = useQuery({
@@ -139,6 +152,7 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
   const { isAdmin } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
   const [staffOpen, setStaffOpen] = useState(false);
+  const [showFormer, setShowFormer] = useState(false);
 
   const colorVar  = `var(--${slug})`;
 
@@ -168,6 +182,7 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
   const attPct      = detail?.attendancePct ?? null;
   const alertCount  = detail?.alerts?.length ?? 0;
   const participants = detail?.participants ?? [];
+  const formerCount = participants.filter((p) => p.status === "Former").length;
   const events      = detail?.upcomingEvents ?? [];
   const staff       = detail?.staff ?? [];
   const alerts      = detail?.alerts ?? [];
@@ -238,6 +253,11 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
             <div className="widget-head">
               <Users className="ico" style={{ color: colorVar }} />
               <h3>Stars</h3>
+              {formerCount > 0 && (
+                <button type="button" className="link" style={{ background: "none", border: "none", cursor: "pointer", marginLeft: "auto", marginRight: 12 }} onClick={() => setShowFormer((v) => !v)}>
+                  {showFormer ? "Hide former" : `Show former (${formerCount})`}
+                </button>
+              )}
               <Link className="link" href="/students">View all</Link>
             </div>
             <div className="widget-body">
@@ -245,7 +265,7 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
                 <div style={{ padding: "20px 0", textAlign: "center", fontSize: 13, color: "var(--fg-tertiary)" }}>
                   No participants yet
                 </div>
-              ) : participants.map((p) => (
+              ) : participants.filter((p) => showFormer || p.status !== "Former").map((p) => (
                 <div className="list-row" key={p.id}>
                   <span className="ss-avatar sm" style={{ background: `var(--${slug}-fill)`, color: `var(--${slug})`, border: `0.5px solid var(--${slug}-border)` }}>
                     {p.initials}
@@ -262,8 +282,8 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
                       <div className="sub">{p.status}</div>
                     )}
                   </div>
-                  <span className={`ss-badge ${p.status === "Active" ? "is-active" : p.status === "Attention" ? "is-attention" : ""}`}>
-                    {p.status === "Active" ? <><CheckCircle2 />Active</> : p.status === "Attention" ? <><AlertTriangle />Attention</> : <><Clock />Prospective</>}
+                  <span className={`ss-badge ${STATUS_BADGE[p.status]?.cls ?? "is-prospective"}`}>
+                    {(() => { const B = STATUS_BADGE[p.status]; const I = B?.icon ?? Clock; return <><I />{B?.label ?? p.status}</>; })()}
                   </span>
                 </div>
               ))}

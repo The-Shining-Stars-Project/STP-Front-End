@@ -50,3 +50,12 @@ export function timestampLabel(s: string): string {
     hour: "numeric", minute: "2-digit", second: "2-digit",
   });
 }
+
+/**
+ * "yyyy-MM" for the viewer's LOCAL month. `toISOString().slice(0, 7)` is the UTC month, which
+ * after ~5 pm Pacific on the last day of a month is already next month — Weekly Data,
+ * Planning and the roll-up were opening on a month with no data yet.
+ */
+export function localMonthKey(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}

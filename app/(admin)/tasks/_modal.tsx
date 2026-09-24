@@ -155,7 +155,7 @@ export function AddTaskModal({
           <div>
             <div className="ss-label" style={{ marginBottom: 8 }}>Assignee <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {staffList.map((s) => {
+              {staffList.filter((s) => !s.isFormer).map((s) => {
                 const selected = form.assigneeId === s.id;
                 return (
                   <button key={s.id} type="button" onClick={() => setForm((f) => ({ ...f, assigneeId: f.assigneeId === s.id ? "" : s.id }))}

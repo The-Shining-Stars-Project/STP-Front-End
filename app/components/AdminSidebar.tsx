@@ -72,7 +72,7 @@ const SECTIONS: NavSection[] = [
       { href: "/tracker", label: "Weekly Data", icon: PenLine },
       { href: "/planning", label: "Per-Star Planning", icon: Goal },
       { href: "/year-calendar", label: "Year Calendar", icon: CalendarRange },
-      { href: "/cohort-rollup", label: "Cohort Roll-Up", icon: PieChart, adminOnly: true },
+      { href: "/cohort-rollup", label: "Cohort Roll-Up", icon: PieChart },
       { href: "/games", label: "Curriculum Resources", icon: Gamepad2 },
       { href: "/games/develop", label: "To Develop", icon: Lightbulb },
       { href: "/skills", label: "Skills Framework", icon: Target },

@@ -1,5 +1,7 @@
 "use client";
 
+import { localMonthKey } from "@/lib/format";
+
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { BarChart3 } from "lucide-react";
 import { cohortApi } from "@/lib/api/cohort";
@@ -85,7 +87,7 @@ function LevelBadge({ level }: { level: string }) {
 }
 
 export default function CohortRollUpPage() {
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => localMonthKey());
   const [programId, setProgramId] = useState<string | null>(null);
   // Cached + shared via React Query (#34).
   const programs: ProgramSummaryDto[] = useMyPrograms().data ?? [];

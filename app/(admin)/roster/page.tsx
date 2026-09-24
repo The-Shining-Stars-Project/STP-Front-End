@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Users2, Check } from "lucide-react";
 import { rosterApi } from "@/lib/api/roster";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import { useReferenceLists, useStaff } from "@/lib/api/hooks";
 import StarStatusFilter, { DEFAULT_STAR_STATUS_FILTER, starStatusMatches, type StarStatusFilterValue } from "../components/StarStatusFilter";
 import type {
@@ -25,6 +26,7 @@ export default function RosterPage() {
   const [year, setYear] = useState(now.getFullYear());
   const [quarter, setQuarter] = useState(Math.floor(now.getMonth() / 3) + 1);
 
+  const { canManage } = useAuth();
   const [entries, setEntries] = useState<RosterEntryDto[]>([]);
   // Cached + shared via React Query (#34).
   const lists = useReferenceLists().data;
@@ -59,13 +61,19 @@ export default function RosterPage() {
     setQuarter(nextQuarter);
   }
 
+  // A dual-enrolled Star has one row per program (each with its own placement), so rows
+  // are identified by participant + program, not participant alone.
+  const rowKey = (e: { participantId: string; programId: string }) => `${e.participantId}:${e.programId}`;
+
   function save(entry: RosterEntryDto, patch: Partial<RosterEntryDto>) {
+    if (!canManage) return;
     const merged = { ...entry, ...patch };
-    setEntries((prev) => prev.map((e) => (e.participantId === entry.participantId ? merged : e)));
-    setSavingId(entry.participantId);
+    setEntries((prev) => prev.map((e) => (rowKey(e) === rowKey(entry) ? merged : e)));
+    setSavingId(rowKey(entry));
     rosterApi
       .upsert({
         participantId: entry.participantId,
+        programId: entry.programId,
         year, quarter,
         siteIds: merged.siteIds,
         starGroupId: merged.starGroupId,
@@ -73,9 +81,15 @@ export default function RosterPage() {
         countedInRatio: merged.countedInRatio,
         notes: merged.notes,
       })
-      .then((saved) => setEntries((prev) => prev.map((e) => (e.participantId === saved.participantId ? saved : e))))
-      .catch(() => { /* keep optimistic value */ })
-      .finally(() => setSavingId((cur) => (cur === entry.participantId ? null : cur)));
+      .then((saved) => setEntries((prev) => prev.map((e) => (rowKey(e) === rowKey(saved) ? saved : e))))
+      .catch((err) => {
+        // Roll back and say so — a silently kept optimistic value is how "assigned staff
+        // doesn't populate on Planning" happened (the save had never landed).
+        setEntries((prev) => prev.map((e) => (rowKey(e) === rowKey(entry) ? entry : e)));
+        setError(true);
+        console.error("Roster save failed:", err);
+      })
+      .finally(() => setSavingId((cur) => (cur === rowKey(entry) ? null : cur)));
   }
 
   // Group by program (stable dimension) so rows don't jump while a site is being assigned.
@@ -170,16 +184,19 @@ export default function RosterPage() {
                     </thead>
                     <tbody>
                       {prog.rows.map((e) => (
-                        <tr key={e.participantId} style={{ borderBottom: "0.5px solid var(--border)" }}>
+                        <tr key={rowKey(e)} style={{ borderBottom: "0.5px solid var(--border)" }}>
                           <td style={{ padding: "6px 12px", whiteSpace: "nowrap" }}>
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                               <span className="ss-avatar teacher sm">{e.participantInitials}</span>
                               <span style={{ fontSize: "var(--fs-body)" }}>{e.participantName}</span>
-                              {savingId === e.participantId && <Check style={{ width: 12, height: 12, color: "var(--success)" }} />}
+                              {e.isSecondaryEnrollment && (
+                                <span className="ss-meta" style={{ color: "var(--fg-tertiary)" }} title="Dual enrollment — this is the Star's second program">also enrolled</span>
+                              )}
+                              {savingId === rowKey(e) && <Check style={{ width: 12, height: 12, color: "var(--success)" }} />}
                             </span>
                           </td>
                           <td style={{ padding: "6px 12px" }}>
-                            <select style={selectStyle} value={e.starGroupId ?? ""} onChange={(ev) => save(e, { starGroupId: ev.target.value || null })}>
+                            <select style={selectStyle} disabled={!canManage} value={e.starGroupId ?? ""} onChange={(ev) => save(e, { starGroupId: ev.target.value || null })}>
                               <option value="">—</option>
                               {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
                             </select>
@@ -195,7 +212,8 @@ export default function RosterPage() {
                                     className={`ss-chip${on ? " is-active" : ""}`}
                                     aria-pressed={on}
                                     onClick={() => toggleSite(e, s.id)}
-                                    style={{ cursor: "pointer", fontSize: 11, padding: "2px 8px" }}
+                                    disabled={!canManage}
+                                    style={{ cursor: canManage ? "pointer" : "default", fontSize: 11, padding: "2px 8px" }}
                                   >
                                     {s.name}
                                   </button>
@@ -205,7 +223,7 @@ export default function RosterPage() {
                             </div>
                           </td>
                           <td style={{ padding: "6px 12px" }}>
-                            <select style={selectStyle} value={e.assignedStaffId ?? ""} onChange={(ev) => save(e, { assignedStaffId: ev.target.value || null })}
+                            <select style={selectStyle} disabled={!canManage} value={e.assignedStaffId ?? ""} onChange={(ev) => save(e, { assignedStaffId: ev.target.value || null })}
                               title="Lists staff records from the Onboarding page — someone with only a login needs a staff record to appear here.">
                               <option value="">Unassigned</option>
                               {activeStaff.map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
@@ -218,6 +236,7 @@ export default function RosterPage() {
                             <input
                               type="checkbox"
                               checked={e.countedInRatio}
+                              disabled={!canManage}
                               onChange={(ev) => save(e, { countedInRatio: ev.target.checked })}
                               style={{ cursor: "pointer", accentColor: "var(--primary)" }}
                               title="Counted toward the 1:6 staffing ratio"

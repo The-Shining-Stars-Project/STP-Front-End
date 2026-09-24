@@ -1,5 +1,7 @@
 "use client";
 
+import { localMonthKey } from "@/lib/format";
+
 import { useEffect, useMemo, useState } from "react";
 import { ClipboardList, RefreshCw, Check, X } from "lucide-react";
 import { describeApiError } from "@/lib/api/client";
@@ -75,7 +77,7 @@ const cellSelect: React.CSSProperties = {
 export default function TrackerWidget({ participantId, tracks = ["PartTime"] }: { participantId: string; tracks?: ProgramTrack[] }) {
   const [track, setTrack] = useState<ProgramTrack>(tracks[0] ?? "PartTime");
   const levels = track === "Pathways" ? PATHWAYS_LEVELS : LEVELS;
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => localMonthKey());
   const [areas, setAreas] = useState<ObjectiveAreaDto[]>([]);
   const [data, setData] = useState<StarMonthDto | null>(null);
   const [loading, setLoading] = useState(true);

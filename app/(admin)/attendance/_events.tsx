@@ -1,5 +1,7 @@
 "use client";
 
+import { localMonthKey } from "@/lib/format";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarDays, Check, Plus, Search, Users, X, RotateCcw, Trash2 } from "lucide-react";
 import { attendanceLabel, isManagementStatus } from "@/lib/attendanceStatus";
@@ -50,7 +52,7 @@ export default function EventsPanel({ canManage }: { canManage: boolean }) {
   const { isAdmin } = useAuth();
   const sites: SiteDto[] = useReferenceLists().data?.sites ?? [];
 
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => localMonthKey());
   const [events, setEvents] = useState<EventSessionSummaryDto[]>([]);
   const [loading, setLoading] = useState(true);
   // An outage must not render as "no events" — the same distinction the class view draws.

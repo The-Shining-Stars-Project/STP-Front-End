@@ -550,7 +550,9 @@ export function RosterView({
                 </button>
               )}
             </span>
-          ) : canManage ? (
+          ) : (
+            // Any assigned teacher can submit (client, Sep 24). A premature submit is no longer
+            // a problem because a coordinator can Reopen — that button is the management-only part.
             <button
               className="ss-btn ss-btn-primary"
               disabled={total === 0 || marked < total || submitting}
@@ -559,12 +561,6 @@ export function RosterView({
               {submitting ? <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} /> : <Check className="ss-btn-icon" />}
               {submitting ? "Submitting…" : "Submit attendance"}
             </button>
-          ) : (
-            // Teachers mark; a coordinator or admin finalizes (client rule, Sep 2026) — a
-            // teacher submitting the moment every star was marked left late arrivals unfixable.
-            <span style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>
-              {marked < total ? `${total - marked} still to mark` : "Marked — a coordinator will submit"}
-            </span>
           )}
         </div>
       </div>

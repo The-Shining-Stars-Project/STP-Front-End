@@ -509,6 +509,7 @@ export function ScriptDetailPanel({
   onViewPdf,
   onUploadPdf,
   onRemovePdf,
+  onDelete,
   pdfBusy = false,
   pdfError,
 }: {
@@ -520,6 +521,8 @@ export function ScriptDetailPanel({
   onViewPdf?: () => void;
   onUploadPdf?: (file: File) => void;
   onRemovePdf?: () => void;
+  /** Deletes the whole script (management). Independent of whether a PDF is attached. */
+  onDelete?: () => void;
   /** An upload, download or removal is in flight for this script. */
   pdfBusy?: boolean;
   /** Why the last PDF action failed, if it did. */
@@ -913,6 +916,20 @@ export function ScriptDetailPanel({
             <Download className="ss-btn-icon" />
             {script.pdf ? "Download PDF" : "No PDF"}
           </button>
+          {onDelete && (
+            <button
+              type="button"
+              className="ss-btn"
+              onClick={onDelete}
+              disabled={pdfBusy}
+              title="Delete this script"
+              aria-label={`Delete ${script.title}`}
+              style={{ color: "var(--danger)" }}
+            >
+              <Trash2 className="ss-btn-icon" />
+              Delete
+            </button>
+          )}
           <button
             type="button"
             className="ss-btn"

@@ -1,5 +1,7 @@
 "use client";
 
+import { localMonthKey } from "@/lib/format";
+
 import { useEffect, useMemo, useState } from "react";
 import { Target, Check } from "lucide-react";
 import { planningApi } from "@/lib/api/planning";
@@ -34,7 +36,7 @@ function Label({ children }: { children: React.ReactNode }) {
 
 export default function PlanningPage() {
   const now = new Date();
-  const [month, setMonth] = useState(now.toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => localMonthKey());
   const [programId, setProgramId] = useState<string | null>(null);
 
   const [plans, setPlans] = useState<PerStarPlanDto[]>([]);
