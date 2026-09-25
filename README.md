@@ -1,36 +1,67 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Shining Stars CRM — Frontend
 
-## Getting Started
+Next.js frontend for the Shining Stars Project CRM. The API is in
+[`STP-BackEnd`](https://github.com/The-Shining-Stars-Project/STP-BackEnd). See `PRODUCT.md` for
+users, tone, and design principles.
 
-First, run the development server:
+| Concern   | Technology                        |
+|-----------|-----------------------------------|
+| Framework | Next.js 16 (App Router), React 19 |
+| Data      | TanStack Query                    |
+| Styling   | Tailwind CSS v4                   |
+| Language  | TypeScript                        |
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Project structure
+
+```
+STP-FrontEnd/
+├── app/
+│   ├── page.tsx              # Sign-in
+│   ├── (admin)/              # Every signed-in page: dashboard, students (stars), attendance,
+│   │   │                     # tracker, planning, roster, programs, staff, users, reports, ...
+│   │   └── components/       # Shared admin components (modals, filters, widgets)
+│   └── components/           # App-wide components (sidebar, program theming)
+├── lib/
+│   ├── api/                  # One module per API area; client.ts is the fetch wrapper
+│   ├── auth/                 # AuthProvider, AuthGuard
+│   └── types/api.ts          # Response types, kept in sync with the backend DTOs
+├── proxy.ts                  # Route protection and admin-only page gating
+└── next.config.ts            # /backend rewrite to the API, security headers and CSP
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The browser never calls the API directly. Every request goes to `/backend/*` on this app's own
+origin, and `next.config.ts` rewrites it to `NEXT_PUBLIC_API_URL`. That keeps the httpOnly
+auth cookies first-party.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Running locally
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Prerequisites: Node.js 20+, and the API running locally (see the backend README).
 
-## Learn More
+```bash
+npm install
+npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+The app runs at http://localhost:3000. By default it proxies to the API at
+`http://localhost:5208`. To point elsewhere, set `NEXT_PUBLIC_API_URL` in `.env.local`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Checks
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run typecheck
+npm run lint
+npm run build
+```
 
-## Deploy on Vercel
+CI (`.github/workflows/ci.yml`) runs all three on every push and pull request.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Deployment
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Pushing to `main` deploys to Azure App Service via
+`.github/workflows/main_shining-stars-crm-app.yml`.
+
+- `NEXT_PUBLIC_API_URL` is read at **build time** from the workflow's build step. Changing
+  the Azure app setting alone does nothing.
+- If the change depends on new API endpoints or a migration, deploy the backend first.
+- Leave about 20 minutes between pushes. A deploy that starts while the previous one is still
+  applying fails with a 409.
