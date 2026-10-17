@@ -1,6 +1,6 @@
 "use client";
 
-import { localMonthKey } from "@/lib/format";
+import { localDateKey, localMonthKey } from "@/lib/format";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarDays, Check, Plus, Search, Users, X, RotateCcw, Trash2 } from "lucide-react";
@@ -341,7 +341,8 @@ function EventFormModal({
 }) {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<EventCategory>("Production");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  // Local day, not toISOString(): in the evening (Pacific) the UTC date is already tomorrow.
+  const [date, setDate] = useState(() => localDateKey());
   const [venue, setVenue] = useState("");
   const [siteIds, setSiteIds] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);

@@ -21,6 +21,15 @@ export function isManagementRole(role: StaffRole | string | null | undefined): b
   return role === "Coordinator" || role === "TechnologySystemsCoordinator" || role === "Admin";
 }
 
+/**
+ * Roles that carry their own stars: the only staff offered in Assigned-staff pickers and as
+ * teacher chips on Roster, Per-Star Planning and Weekly Data. Admins and coordinators have
+ * staff records for onboarding but must not "populate in data" (client, Oct 2026).
+ */
+export function isTeachingRole(role: StaffRole | string | null | undefined): boolean {
+  return role === "Teacher" || role === "TeacherAssistant";
+}
+
 /** CSS colour class for `.ss-avatar` — the two coordinator roles share a colour, assistants match teachers. */
 export function staffRoleAvatarClass(role: StaffRole | string): string {
   switch (role) {

@@ -55,7 +55,11 @@ route protection lives in `proxy.ts`, not `middleware.ts`.
 - No mock or demo fallbacks in production paths. Demo rows rendering in prod caused
   "Save does nothing" bugs twice.
 - Program colors (MJC blue, Pathways teal, Manteca coral, Productions amber) come from each
-  program's `colorHex` via `ProgramTheme`. Don't hardcode them.
+  program's `colorHex` via `ProgramTheme`. Don't hardcode them. Prefer inline
+  `programTint(colorHex)` over `.ss-dot.<slug>` classes: slugs like `pathways:-manteca` get no
+  CSS rule and render colourless.
+- "Today" is `localDateKey()` / `localMonthKey()` from `lib/format`, never
+  `toISOString().slice(...)` (UTC flips to tomorrow after ~5 pm Pacific).
 - Accessibility: WCAG 2.1 AA. Color is never the only signal, and tap targets are at least 34px.
 
 ## Client rules that shape the UI
@@ -66,6 +70,10 @@ route protection lives in `proxy.ts`, not `middleware.ts`.
   Not scheduled and can reopen a session.
 - A teacher only sees their programs' stars. An empty screen for a teacher usually means an
   unlinked staff record, not a bug.
+- Dual-enrolled stars show under both programs (match `programId` OR `secondaryProgramId`).
+- Assigned-staff pickers and teacher chips (Roster, Per-Star Planning, Weekly Data) list
+  teaching staff only (`isTeachingRole`: Teacher, Teacher Assistant), so admins and coordinators
+  don't "populate in data". A dual-enrolled star's row only takes staff assigned to that row's program.
 
 ## Before handing work back
 

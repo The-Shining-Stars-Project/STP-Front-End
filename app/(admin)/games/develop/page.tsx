@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Lightbulb, Plus, ArrowUpRight, Check, Wand2 } from "lucide-react";
+import { Fragment, useEffect, useState } from "react";
+import { Lightbulb, Plus, ArrowUpRight, Check, Wand2, AlertTriangle } from "lucide-react";
 import { gameBacklogApi } from "@/lib/api/gameBacklog";
+import { describeApiError } from "@/lib/api/client";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import type { GameIdeaDto, AgeModificationDto, GameCategory } from "@/lib/types/api";
 
 const CATEGORIES: GameCategory[] = ["Warmup", "Circle", "Movement", "Name", "Icebreaker", "Theater", "Reset", "SuggestedAddition"];
@@ -12,54 +14,104 @@ const inputStyle: React.CSSProperties = {
   borderRadius: "var(--r-md)", padding: "7px 10px", fontSize: 13, color: "var(--fg)", background: "var(--surface)", outline: "none",
 };
 
+/** Inline error banner; the text always says what failed, so colour is never the only signal. */
+function InlineError({ message }: { message: string }) {
+  return (
+    <div className="ss-alert is-danger" role="alert" style={{ padding: "8px 12px" }}>
+      <AlertTriangle />
+      <span className="ss-alert-text" style={{ fontSize: 13 }}>{message}</span>
+    </div>
+  );
+}
+
 export default function ToDevelopPage() {
+  // Anyone can log ideas and modifications; promoting into Curriculum Resources is
+  // ManagementWrite, so Promote is hidden from everyone else instead of failing with a 403.
+  const { canManage } = useAuth();
   const [ideas, setIdeas] = useState<GameIdeaDto[]>([]);
   const [mods, setMods] = useState<AgeModificationDto[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const [ideaForm, setIdeaForm] = useState<{ open: boolean; name: string; category: GameCategory | ""; source: string; notes: string; teacher: boolean }>(
     { open: false, name: "", category: "", source: "", notes: "", teacher: false });
   const [modForm, setModForm] = useState<{ open: boolean; gameName: string; ageLevel: string; modification: string; teacher: boolean }>(
     { open: false, gameName: "", ageLevel: "", modification: "", teacher: false });
   const [promoting, setPromoting] = useState<string | null>(null);
+  const [savingIdea, setSavingIdea] = useState(false);
+  const [savingMod, setSavingMod] = useState(false);
+  const [ideaError, setIdeaError] = useState<string | null>(null);
+  const [modError, setModError] = useState<string | null>(null);
+  const [promoteError, setPromoteError] = useState<{ id: string; message: string } | null>(null);
 
   useEffect(() => {
     Promise.all([gameBacklogApi.getIdeas(), gameBacklogApi.getAgeMods()])
-      .then(([i, m]) => { setIdeas(i); setMods(m); })
-      .catch(() => {})
+      .then(([i, m]) => { setIdeas(i); setMods(m); setLoadError(null); })
+      .catch((e: unknown) => setLoadError(describeApiError(e, "Check your connection and try again.")))
       .finally(() => setLoading(false));
-  }, []);
+  }, [reloadKey]);
 
+  function retryLoad() {
+    setLoading(true);
+    setLoadError(null);
+    setReloadKey((k) => k + 1);
+  }
+
+  // On failure the form stays open with everything typed, and says why (Oct 2026: a failed
+  // save used to close the form and lose the text).
   async function addIdea() {
-    if (!ideaForm.name.trim()) return;
-    const created = await gameBacklogApi.createIdea({
-      name: ideaForm.name.trim(),
-      targetCategory: ideaForm.category || null,
-      sourceInspiration: ideaForm.source.trim() || null,
-      statusNotes: ideaForm.notes.trim() || null,
-      teacherSuggested: ideaForm.teacher,
-    }).catch(() => null);
-    if (created) setIdeas((p) => [created, ...p]);
-    setIdeaForm({ open: false, name: "", category: "", source: "", notes: "", teacher: false });
+    if (!ideaForm.name.trim() || savingIdea) return;
+    setSavingIdea(true);
+    setIdeaError(null);
+    try {
+      const created = await gameBacklogApi.createIdea({
+        name: ideaForm.name.trim(),
+        targetCategory: ideaForm.category || null,
+        sourceInspiration: ideaForm.source.trim() || null,
+        statusNotes: ideaForm.notes.trim() || null,
+        teacherSuggested: ideaForm.teacher,
+      });
+      setIdeas((p) => [created, ...p]);
+      setIdeaForm({ open: false, name: "", category: "", source: "", notes: "", teacher: false });
+    } catch (e) {
+      setIdeaError(describeApiError(e, "Couldn't add the idea. Your text is still here; try again."));
+    } finally {
+      setSavingIdea(false);
+    }
   }
 
   async function addMod() {
-    if (!modForm.gameName.trim() || !modForm.modification.trim()) return;
-    const created = await gameBacklogApi.createAgeMod({
-      gameName: modForm.gameName.trim(),
-      groupAgeLevel: modForm.ageLevel.trim(),
-      modification: modForm.modification.trim(),
-      teacherSuggested: modForm.teacher,
-    }).catch(() => null);
-    if (created) setMods((p) => [created, ...p]);
-    setModForm({ open: false, gameName: "", ageLevel: "", modification: "", teacher: false });
+    if (!modForm.gameName.trim() || !modForm.modification.trim() || savingMod) return;
+    setSavingMod(true);
+    setModError(null);
+    try {
+      const created = await gameBacklogApi.createAgeMod({
+        gameName: modForm.gameName.trim(),
+        groupAgeLevel: modForm.ageLevel.trim(),
+        modification: modForm.modification.trim(),
+        teacherSuggested: modForm.teacher,
+      });
+      setMods((p) => [created, ...p]);
+      setModForm({ open: false, gameName: "", ageLevel: "", modification: "", teacher: false });
+    } catch (e) {
+      setModError(describeApiError(e, "Couldn't log the modification. Your text is still here; try again."));
+    } finally {
+      setSavingMod(false);
+    }
   }
 
   async function promote(id: string) {
     setPromoting(id);
-    const updated = await gameBacklogApi.promote(id).catch(() => null);
-    if (updated) setIdeas((p) => p.map((i) => (i.id === id ? updated : i)));
-    setPromoting(null);
+    setPromoteError(null);
+    try {
+      const updated = await gameBacklogApi.promote(id);
+      setIdeas((p) => p.map((i) => (i.id === id ? updated : i)));
+    } catch (e) {
+      setPromoteError({ id, message: describeApiError(e, "Couldn't promote this idea. Try again.") });
+    } finally {
+      setPromoting(null);
+    }
   }
 
   return (
@@ -71,15 +123,27 @@ export default function ToDevelopPage() {
       <div className="adm-content" style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
         <div className="info-note">
           <Lightbulb />
-          <span>Capture game ideas and age modifications as they come up in class. Refine an idea, then <strong>promote</strong> it into the Games Library as a draft to finish tagging.</span>
+          {canManage ? (
+            <span>Capture game ideas and modifications as they come up in class. Refine an idea, then <strong>promote</strong> it into Curriculum Resources as a draft to finish tagging.</span>
+          ) : (
+            <span>Capture game ideas and modifications as they come up in class. Coordinators review ideas and <strong>promote</strong> the ready ones into Curriculum Resources.</span>
+          )}
         </div>
+
+        {loadError && (
+          <div className="ss-alert is-danger" role="alert">
+            <AlertTriangle />
+            <span className="ss-alert-text">Couldn&apos;t load ideas and modifications. {loadError}</span>
+            <button type="button" className="ss-btn" onClick={retryLoad}>Retry</button>
+          </div>
+        )}
 
         {/* Game ideas */}
         <div className="widget">
           <div className="widget-head" style={{ display: "flex", alignItems: "center" }}>
             <Lightbulb className="ico" style={{ color: "var(--primary)" }} />
             <h3>Game ideas</h3>
-            <button type="button" className="ss-btn" style={{ marginLeft: "auto" }} onClick={() => setIdeaForm((f) => ({ ...f, open: !f.open }))}>
+            <button type="button" className="ss-btn" style={{ marginLeft: "auto" }} onClick={() => { setIdeaForm((f) => ({ ...f, open: !f.open })); setIdeaError(null); }}>
               <Plus className="ss-btn-icon" />Add idea
             </button>
           </div>
@@ -99,18 +163,20 @@ export default function ToDevelopPage() {
                   <input type="checkbox" checked={ideaForm.teacher} onChange={(e) => setIdeaForm((f) => ({ ...f, teacher: e.target.checked }))} style={{ accentColor: "var(--primary)" }} />
                   Teacher-suggested
                 </label>
+                {ideaError && <InlineError message={ideaError} />}
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                  <button type="button" className="ss-btn" onClick={() => setIdeaForm((f) => ({ ...f, open: false }))}>Cancel</button>
-                  <button type="button" className="ss-btn ss-btn-primary" onClick={addIdea} disabled={!ideaForm.name.trim()}><Check className="ss-btn-icon" />Add</button>
+                  <button type="button" className="ss-btn" onClick={() => { setIdeaForm((f) => ({ ...f, open: false })); setIdeaError(null); }} disabled={savingIdea}>Cancel</button>
+                  <button type="button" className="ss-btn ss-btn-primary" onClick={addIdea} disabled={!ideaForm.name.trim() || savingIdea}><Check className="ss-btn-icon" />{savingIdea ? "Adding…" : "Add"}</button>
                 </div>
               </div>
             )}
             {loading ? (
               <div style={{ padding: "12px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>Loading…</div>
             ) : ideas.length === 0 ? (
-              <div style={{ padding: "12px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>No ideas yet — capture the first one.</div>
+              loadError ? null : <div style={{ padding: "12px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>No ideas yet — capture the first one.</div>
             ) : ideas.map((i) => (
-              <div key={i.id} className="list-row" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "0.5px solid var(--border)" }}>
+              <Fragment key={i.id}>
+              <div className="list-row" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "0.5px solid var(--border)" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     {i.name}
@@ -125,22 +191,25 @@ export default function ToDevelopPage() {
                 </div>
                 {i.promotedGameId ? (
                   <span className="ss-badge is-active" style={{ flexShrink: 0 }}><Check />In library</span>
-                ) : (
+                ) : canManage ? (
                   <button type="button" className="ss-btn" onClick={() => promote(i.id)} disabled={promoting === i.id} style={{ flexShrink: 0 }}>
                     <ArrowUpRight className="ss-btn-icon" />{promoting === i.id ? "Promoting…" : "Promote"}
                   </button>
-                )}
+                ) : null}
               </div>
+              {promoteError?.id === i.id && <InlineError message={promoteError.message} />}
+              </Fragment>
             ))}
           </div>
         </div>
 
-        {/* Age modifications */}
+        {/* Modifications (renamed from "Age modifications", client Oct 2026; the entity, API
+            and agemod.* audit names stay as they are). */}
         <div className="widget">
           <div className="widget-head" style={{ display: "flex", alignItems: "center" }}>
             <Wand2 className="ico" style={{ color: "var(--primary)" }} />
-            <h3>Age modifications</h3>
-            <button type="button" className="ss-btn" style={{ marginLeft: "auto" }} onClick={() => setModForm((f) => ({ ...f, open: !f.open }))}>
+            <h3>Modifications</h3>
+            <button type="button" className="ss-btn" style={{ marginLeft: "auto" }} onClick={() => { setModForm((f) => ({ ...f, open: !f.open })); setModError(null); }}>
               <Plus className="ss-btn-icon" />Log modification
             </button>
           </div>
@@ -156,16 +225,17 @@ export default function ToDevelopPage() {
                   <input type="checkbox" checked={modForm.teacher} onChange={(e) => setModForm((f) => ({ ...f, teacher: e.target.checked }))} style={{ accentColor: "var(--primary)" }} />
                   Teacher-suggested
                 </label>
+                {modError && <InlineError message={modError} />}
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                  <button type="button" className="ss-btn" onClick={() => setModForm((f) => ({ ...f, open: false }))}>Cancel</button>
-                  <button type="button" className="ss-btn ss-btn-primary" onClick={addMod} disabled={!modForm.gameName.trim() || !modForm.modification.trim()}><Check className="ss-btn-icon" />Log</button>
+                  <button type="button" className="ss-btn" onClick={() => { setModForm((f) => ({ ...f, open: false })); setModError(null); }} disabled={savingMod}>Cancel</button>
+                  <button type="button" className="ss-btn ss-btn-primary" onClick={addMod} disabled={!modForm.gameName.trim() || !modForm.modification.trim() || savingMod}><Check className="ss-btn-icon" />{savingMod ? "Logging…" : "Log"}</button>
                 </div>
               </div>
             )}
             {loading ? (
               <div style={{ padding: "12px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>Loading…</div>
             ) : mods.length === 0 ? (
-              <div style={{ padding: "12px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>No modifications logged yet.</div>
+              loadError ? null : <div style={{ padding: "12px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>No modifications logged yet.</div>
             ) : mods.map((m) => (
               <div key={m.id} style={{ padding: "8px 0", borderBottom: "0.5px solid var(--border)" }}>
                 <div style={{ fontSize: 14, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>

@@ -30,7 +30,12 @@ import {
   ResetPasswordModal,
   ResetMfaModal,
   DeleteUserModal,
+  StaffLinkBadge,
   iconBtnStyle,
+  loginsByStaffId,
+  staffLinkIssues,
+  type StaffLinkIssue,
+  type StaffListState,
 } from "./_modals";
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -44,6 +49,12 @@ export default function UsersPage() {
   const staffQ = useStaff();
   const users: UserDto[] = usersQ.data ?? [];
   const staff: StaffSummaryDto[] = staffQ.data ?? [];
+  // The modals only call a linked record "not found" once this list has loaded (see StaffListState).
+  const staffList: StaffListState = {
+    loaded: staffQ.isSuccess,
+    error: staffQ.isError ? staffQ.error : null,
+    onRetry: () => { void staffQ.refetch(); },
+  };
   const loading = usersQ.isPending;
   const refreshUsers = () => queryClient.invalidateQueries({ queryKey: queryKeys.users });
   const [modalOpen, setModalOpen] = useState(false);
@@ -73,6 +84,25 @@ export default function UsersPage() {
   // that cannot actually use the CRM yet.
   const unenrolledCount = users.filter((u) => !u.mfaEnabled).length;
 
+  // A login's access comes only from its linked staff record (Users.StaffMemberId), so flag the
+  // links that leave it empty-handed: former, no programs, shared, or a renamed duplicate.
+  const staffById = new Map(staff.map((m) => [m.id, m]));
+  const linkedLogins = loginsByStaffId(users);
+  const linkIssues = new Map<string, StaffLinkIssue[]>();
+  for (const u of users) {
+    if (!u.staffMemberId) continue;
+    const record = staffById.get(u.staffMemberId);
+    // Until the staff list arrives, an unknown id is "loading", not "missing".
+    if (!record && !staffQ.isSuccess) continue;
+    const others = (linkedLogins.get(u.staffMemberId) ?? []).filter((o) => o.id !== u.id);
+    linkIssues.set(u.id, staffLinkIssues(u.role, record ?? null, others));
+  }
+  // Active non-admin logins that can sign in but see no stars, classes or rosters.
+  const seesNothingCount = users.filter((u) =>
+    u.isActive && u.role !== "Admin" &&
+    (!u.staffMemberId || (linkIssues.get(u.id) ?? []).some((i) => i.seesNothing))
+  ).length;
+
   return (
     <>
       <div className="adm-main">
@@ -82,6 +112,14 @@ export default function UsersPage() {
             <span className="date">
               {users.length} account{users.length === 1 ? "" : "s"} · {adminCount} admin{adminCount === 1 ? "" : "s"}
               {unenrolledCount > 0 && ` · ${unenrolledCount} without two-factor`}
+              {seesNothingCount > 0 && (
+                <span
+                  style={{ color: "var(--danger-text)" }}
+                  title="Active staff logins that are not linked to a staff record, or are linked to one that is former, missing or has no programs. See the Staff record column."
+                >
+                  {` · ${seesNothingCount} login${seesNothingCount === 1 ? " sees" : "s see"} nothing`}
+                </span>
+              )}
             </span>
           </div>
           <div className="right">
@@ -109,8 +147,9 @@ export default function UsersPage() {
                   <tr>
                     <th>User</th>
                     <th>Email</th>
-                    <th>Role</th>
+                    {/* Same order as the cells below (these two headers were once swapped). */}
                     <th>Staff record</th>
+                    <th>Role</th>
                     <th>Status</th>
                     <th>Two-factor</th>
                     <th style={{ width: 150, textAlign: "right" }}>Actions</th>
@@ -157,14 +196,21 @@ export default function UsersPage() {
                           </div>
                         </td>
                         <td className="ss-meta">{u.email}</td>
-                        {/* A Staff account sees nothing until it is linked to a staff record
-                            that is assigned to a program — make the missing link visible. */}
+                        {/* A Staff account sees nothing until it is linked to an active staff
+                            record that is assigned to a program — make a missing or broken link visible. */}
                         <td>
                           {u.staffMemberId ? (
-                            <span className="ss-meta">
-                              {staff.find((m) => m.id === u.staffMemberId)?.fullName ?? "Linked"}
-                              {u.staffRole ? <span style={{ color: "var(--fg-tertiary)" }}> · {staffRoleLabel(u.staffRole)}</span> : null}
-                            </span>
+                            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4, maxWidth: 280 }}>
+                              <span className="ss-meta">
+                                {staffById.get(u.staffMemberId)?.fullName ?? "Linked"}
+                                {u.staffRole ? <span style={{ color: "var(--fg-tertiary)" }}> · {staffRoleLabel(u.staffRole)}</span> : null}
+                              </span>
+                              {(linkIssues.get(u.id) ?? []).length > 0 && (
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                  {(linkIssues.get(u.id) ?? []).map((i) => <StaffLinkBadge key={i.key} issue={i} />)}
+                                </div>
+                              )}
+                            </div>
                           ) : u.role === "Admin" ? (
                             <span className="ss-meta" style={{ color: "var(--fg-tertiary)" }}>—</span>
                           ) : (
@@ -234,6 +280,8 @@ export default function UsersPage() {
       {modalOpen && (
         <CreateUserModal
           staff={staff}
+          staffList={staffList}
+          users={users}
           onClose={() => setModalOpen(false)}
           onCreated={(u) => {
             refreshUsers();
@@ -247,6 +295,8 @@ export default function UsersPage() {
         <EditUserModal
           target={editing}
           staff={staff}
+          staffList={staffList}
+          users={users}
           isSelf={currentUser?.id === editing.id}
           onClose={() => setEditing(null)}
           onSaved={(u) => {

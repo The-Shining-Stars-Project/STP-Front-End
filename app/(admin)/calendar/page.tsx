@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { Plus, ChevronLeft, ChevronRight, MapPin, Clock, X, Pencil, Trash2, Check, Loader2, Info } from "lucide-react";
-import { parseLocalDate } from "@/lib/format";
+import { Plus, ChevronLeft, ChevronRight, MapPin, Clock, X, Pencil, Trash2, Check, Loader2, Info, AlertCircle } from "lucide-react";
+import { parseLocalDate, localDateKey } from "@/lib/format";
 import { linkify } from "@/lib/linkify";
 import { calendarApi } from "@/lib/api/calendar";
-import { ApiError } from "@/lib/api/client";
+import { ApiError, describeApiError } from "@/lib/api/client";
 import { usePrograms, useReferenceLists } from "@/lib/api/hooks";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { programPillStyle, programTint } from "@/lib/programColor";
 import type { CalendarEventDto, ProgramSummaryDto, CreateCalendarEventDto, SiteDto } from "@/lib/types/api";
 import ProgramPills from "../components/ProgramPills";
 
@@ -49,6 +50,38 @@ function weekOf(anchorIso: string): { iso: string; date: Date }[] {
     const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i, 12);
     return { iso: isoOfDate(d), date: d };
   });
+}
+
+/** "y-m" key for the month after (year, month). */
+function nextMonthKey(year: number, month: number): string {
+  return month === 12 ? `${year + 1}-1` : `${year}-${month + 1}`;
+}
+
+// ── Program filter ────────────────────────────────────────────────────────────
+
+/** Filter key for events with no program (org-wide / staff events). */
+const ORG_WIDE = "none";
+const HIDDEN_PROGRAMS_KEY = "calendar.hiddenPrograms";
+
+const filterKeyOf = (e: CalendarEventDto) => e.programId ?? ORG_WIDE;
+
+/**
+ * The programs this browser has switched OFF. Storing the hidden set (not the shown one) means
+ * a program created later shows by default. Per browser only; storage can be blocked, in which
+ * case the filter still works for the visit.
+ */
+function loadHiddenPrograms(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(HIDDEN_PROGRAMS_KEY);
+    const ids: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveHiddenPrograms(hidden: Set<string>) {
+  try { window.localStorage.setItem(HIDDEN_PROGRAMS_KEY, JSON.stringify([...hidden])); } catch { /* storage blocked */ }
 }
 
 // ── Add Event Modal ───────────────────────────────────────────────────────────
@@ -244,10 +277,11 @@ function EventModal({
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function CalendarPage() {
-  // Lazy init so server/client rendering agrees on the initial value
-  const [today] = useState<{ year: number; month: number; day: number }>(() => {
-    const d = new Date();
-    return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+  // Lazy init so server/client rendering agrees on the initial value. The viewer's LOCAL day.
+  const [today] = useState<{ iso: string; year: number; month: number; day: number }>(() => {
+    const iso = localDateKey();
+    const [year, month, day] = iso.split("-").map(Number);
+    return { iso, year, month, day };
   });
 
   const [viewYear,  setViewYear]  = useState(today.year);
@@ -262,53 +296,98 @@ export default function CalendarPage() {
   const sites: SiteDto[] = useReferenceLists().data?.sites ?? [];
   const { canManage } = useAuth();
   const [loading,   setLoading]   = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEventDto | null>(null);
+  // Admin pages render client-side only (AuthGuard), so reading storage in the initializer is safe.
+  const [hiddenPrograms, setHiddenPrograms] = useState<Set<string>>(loadHiddenPrograms);
 
   const weekDays = useMemo(() => weekOf(weekAnchor), [weekAnchor]);
 
+  const isCurrentMonth = viewYear === today.year && viewMonth === today.month;
+
   // Which months' events are needed: the viewed month, or every month the viewed week touches.
+  // The current month also loads NEXT month so "Upcoming" still has items late in the month;
+  // the grid only renders the viewed month's cells, so those never leak into it.
   const monthsKey = useMemo(() => {
     const pairs = viewMode === "month"
-      ? [`${viewYear}-${viewMonth}`]
+      ? [`${viewYear}-${viewMonth}`, ...(isCurrentMonth ? [nextMonthKey(viewYear, viewMonth)] : [])]
       : [...new Set(weekDays.map((d) => `${d.date.getFullYear()}-${d.date.getMonth() + 1}`))];
     return pairs.join(",");
-  }, [viewMode, viewYear, viewMonth, weekDays]);
+  }, [viewMode, viewYear, viewMonth, weekDays, isCurrentMonth]);
 
-  // Reload events whenever the months in view change
+  // Reload events whenever the months in view change (or Retry is pressed). A failed month no
+  // longer reads as an empty calendar: what did load is shown, plus an error line.
   useEffect(() => {
     let active = true;
     setLoading(true);
     const pairs = monthsKey.split(",").map((k) => { const [y, m] = k.split("-").map(Number); return { y, m }; });
-    Promise.all(pairs.map((p) => calendarApi.getEvents(p.m, p.y).catch(() => [] as CalendarEventDto[])))
-      .then((lists) => { if (active) setEvents(lists.flat()); })
+    Promise.allSettled(pairs.map((p) => calendarApi.getEvents(p.m, p.y)))
+      .then((results) => {
+        if (!active) return;
+        setEvents(results.flatMap((r) => (r.status === "fulfilled" ? r.value : [])));
+        const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+        setLoadError(failed ? describeApiError(failed.reason, "Some events couldn't be loaded.") : null);
+      })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [monthsKey]);
+  }, [monthsKey, reloadTick]);
 
-  // programId → slug map for event coloring
-  const programSlugMap = useMemo(
-    () => Object.fromEntries(programs.map(p => [p.id, p.slug])),
-    [programs],
-  );
+  const programById = useMemo(() => new Map(programs.map((p) => [p.id, p])), [programs]);
 
-  function slugFor(e: CalendarEventDto): string {
-    if (!e.programId) return "staff";
-    return programSlugMap[e.programId] ?? "staff";
+  // Colours come from each program's colorHex, not slug CSS: a slug like "pathways:-manteca"
+  // gets no generated rule, so its events and dots rendered colourless. Org-wide events (and
+  // any program not in the list) keep the neutral staff style.
+  function programOf(e: CalendarEventDto): ProgramSummaryDto | undefined {
+    return e.programId ? programById.get(e.programId) : undefined;
   }
+  function evtStyle(e: CalendarEventDto): React.CSSProperties | undefined {
+    const p = programOf(e);
+    if (!p) return undefined;
+    const t = programTint(p.colorHex);
+    return { background: t.fill, color: t.text };
+  }
+  const evtClass = (e: CalendarEventDto) => (programOf(e) ? "evt" : "evt staff");
+  function eventDot(e: CalendarEventDto, style?: React.CSSProperties) {
+    const p = programOf(e);
+    return (
+      <span aria-hidden="true" className={p ? "ss-dot" : "ss-dot staff"}
+        style={{ ...(p ? { background: programTint(p.colorHex).accent } : {}), ...style }} />
+    );
+  }
+  // Spelled out next to the colour so the program is never told by colour alone.
+  const programLabel = (e: CalendarEventDto) => e.programName ?? "Org-wide";
+
+  // ── Program filter ──
+  function updateHidden(next: Set<string>) {
+    setHiddenPrograms(next);
+    saveHiddenPrograms(next);
+  }
+  function toggleProgram(key: string) {
+    const next = new Set(hiddenPrograms);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    updateHidden(next);
+  }
+  const allShown = !hiddenPrograms.has(ORG_WIDE) && programs.every((p) => !hiddenPrograms.has(p.id));
+
+  // Grid, week view, detail panel and Upcoming all read from the filtered list.
+  const visibleEvents = useMemo(
+    () => events.filter((e) => !hiddenPrograms.has(filterKeyOf(e))),
+    [events, hiddenPrograms],
+  );
 
   // Group events by date (yyyy-MM-dd) — week view can hold two months at once.
   const eventsByDate = useMemo(() => {
-    return events.reduce((acc, e) => {
+    return visibleEvents.reduce((acc, e) => {
       (acc[e.date] = acc[e.date] ?? []).push(e);
       return acc;
     }, {} as Record<string, CalendarEventDto[]>);
-  }, [events]);
+  }, [visibleEvents]);
 
   const cells = useMemo(() => buildCells(viewYear, viewMonth), [viewYear, viewMonth]);
-
-  const isCurrentMonth = viewYear === today.year && viewMonth === today.month;
 
   function shiftWeek(days: number) {
     const a = parseLocalDate(weekAnchor);
@@ -353,7 +432,7 @@ export default function CalendarPage() {
     setViewMode(mode);
   }
 
-  const todayIso = isoOf(today.year, today.month, today.day);
+  const todayIso = today.iso;
   const weekHasToday = weekDays.some((d) => d.iso === todayIso);
 
   // Detail panel: the selected day; else today when it is in view; else (week view) the
@@ -375,16 +454,21 @@ export default function CalendarPage() {
     return `${left} – ${right}, ${b.getFullYear()}`;
   })();
 
-  // Other events in view (excluding the detail day so they don't duplicate)
+  // The side list, excluding the detail day so nothing shows twice. On the current month it is
+  // "Upcoming": today or later (next month included), never the month's first five — on
+  // Oct 16 that used to list Oct 3–9. Other months list that month; week view, that week.
+  const showUpcoming = viewMode === "month" && isCurrentMonth;
   const otherEvents = useMemo(() => {
-    const inView = viewMode === "month"
-      ? events.filter((e) => { const d = parseLocalDate(e.date); return d.getMonth() + 1 === viewMonth && d.getFullYear() === viewYear; })
-      : events.filter((e) => weekDays.some((d) => d.iso === e.date));
+    const inView = viewMode === "week"
+      ? visibleEvents.filter((e) => weekDays.some((d) => d.iso === e.date))
+      : showUpcoming
+        ? visibleEvents.filter((e) => e.date >= todayIso)
+        : visibleEvents.filter((e) => { const d = parseLocalDate(e.date); return d.getMonth() + 1 === viewMonth && d.getFullYear() === viewYear; });
     return inView
       .filter(e => detailDate === null || e.date !== detailDate)
       .sort((a, b) => a.date.localeCompare(b.date))
       .slice(0, 5);
-  }, [events, detailDate, viewMode, viewMonth, viewYear, weekDays]);
+  }, [visibleEvents, detailDate, viewMode, viewMonth, viewYear, weekDays, showUpcoming, todayIso]);
 
   const defaultDate = detailDate ?? isoOf(viewYear, viewMonth, 1);
 
@@ -414,22 +498,50 @@ export default function CalendarPage() {
         </div>
 
         <div className="adm-content">
-          {/* program filter chips */}
-          <div className="row tight" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            {programs.map(p => (
-              <span key={p.id} className="ss-chip is-active">
-                <span className={`ss-dot ${p.slug}`} />
-                {p.name}
-              </span>
-            ))}
+          {/* Program filter: multi-select toggles (they used to be a static legend styled to
+              look selected). The choice is remembered per browser. */}
+          <div className="row tight" role="group" aria-label="Show events for" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" className={`ss-chip${allShown ? " is-active" : ""}`} aria-pressed={allShown}
+              style={{ minHeight: 34 }} onClick={() => updateHidden(new Set())}>
+              All
+              {allShown && <Check style={{ width: 12, height: 12 }} aria-hidden="true" />}
+            </button>
+            {programs.map((p) => {
+              const on = !hiddenPrograms.has(p.id);
+              return (
+                <button key={p.id} type="button" aria-pressed={on} onClick={() => toggleProgram(p.id)}
+                  style={{ ...programPillStyle(p.colorHex, on), minHeight: 34 }}>
+                  <span aria-hidden="true" className="ss-dot" style={{ background: programTint(p.colorHex).accent }} />
+                  {p.name}
+                  {on && <Check style={{ width: 12, height: 12 }} aria-hidden="true" />}
+                </button>
+              );
+            })}
             {programs.length > 0 && (
-              <span style={{ width: 1, height: 22, background: "var(--border-strong)", margin: "0 4px" }} />
+              <span aria-hidden="true" style={{ width: 1, height: 22, background: "var(--border-strong)", margin: "0 4px" }} />
             )}
-            <span className="ss-chip is-active">
-              <span className="ss-dot staff" />
-              Staff
-            </span>
+            {(() => {
+              const on = !hiddenPrograms.has(ORG_WIDE);
+              return (
+                <button type="button" aria-pressed={on} onClick={() => toggleProgram(ORG_WIDE)}
+                  title="Events not tied to a program" style={{ ...programPillStyle(null, on), minHeight: 34 }}>
+                  <span aria-hidden="true" className="ss-dot staff" />
+                  Org-wide
+                  {on && <Check style={{ width: 12, height: 12 }} aria-hidden="true" />}
+                </button>
+              );
+            })()}
           </div>
+
+          {loadError && (
+            <div role="alert" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: "var(--space-3)", padding: "8px 12px", borderRadius: "var(--r-md)", background: "var(--danger-fill, #fce8e8)", color: "var(--danger)", fontSize: 13 }}>
+              <AlertCircle style={{ width: 14, height: 14, flexShrink: 0 }} aria-hidden="true" />
+              <span style={{ flex: 1 }}>Events may be missing: {loadError}</span>
+              <button type="button" className="ss-btn" disabled={loading} onClick={() => setReloadTick((t) => t + 1)}>
+                Retry
+              </button>
+            </div>
+          )}
 
           <div className="cal-layout">
             {/* ── Grid ─────────────────────────────────────────────────── */}
@@ -465,7 +577,7 @@ export default function CalendarPage() {
                         >
                           <span className="dnum">{d.date.getDate()}</span>
                           {evs.map((e) => (
-                            <span key={e.id} className={`evt ${slugFor(e)}`} title={e.title} style={{ whiteSpace: "normal" }}>
+                            <span key={e.id} className={evtClass(e)} title={`${e.title} · ${programLabel(e)}`} style={{ ...evtStyle(e), whiteSpace: "normal" }}>
                               {e.timeRange ? `${e.timeRange} · ` : ""}{e.title}
                             </span>
                           ))}
@@ -496,8 +608,8 @@ export default function CalendarPage() {
                         onClick={() => { if (iso) setSelectedDate(iso === selectedDate ? null : iso); }}
                       >
                         <span className="dnum">{c.d}</span>
-                        {shown.map((e, i) => (
-                          <span key={i} className={`evt ${slugFor(e)}`}>{e.title}</span>
+                        {shown.map((e) => (
+                          <span key={e.id} className={evtClass(e)} title={`${e.title} · ${programLabel(e)}`} style={evtStyle(e)}>{e.title}</span>
                         ))}
                         {extra > 0 && <span className="more-link">+{extra} more</span>}
                       </div>
@@ -519,7 +631,7 @@ export default function CalendarPage() {
                 ) : detailEvents.map(e => (
                   <div key={e.id} className="evt-card">
                     <div className="et" style={{ alignItems: "flex-start" }}>
-                      <span className={`ss-dot ${slugFor(e)}`} style={{ marginTop: 5 }} />
+                      {eventDot(e, { marginTop: 5 })}
                       <span style={{ flex: 1 }}>{e.title}</span>
                       {canManage && (
                         <button type="button" title="Edit event" aria-label={`Edit ${e.title}`} onClick={() => setEditingEvent(e)}
@@ -528,6 +640,7 @@ export default function CalendarPage() {
                         </button>
                       )}
                     </div>
+                    <div className="em" style={{ paddingLeft: 14 }}>{programLabel(e)}</div>
                     {e.siteNames.length > 0 && <div className="em"><MapPin />{e.siteNames.join(" · ")}</div>}
                     {e.location  && <div className="em"><MapPin style={{ visibility: e.siteNames.length ? "hidden" : "visible" }} /><span>{linkify(e.location)}</span></div>}
                     {e.timeRange && <div className="em"><Clock />{e.timeRange}</div>}
@@ -541,9 +654,12 @@ export default function CalendarPage() {
                 )}
               </div>
 
-              {otherEvents.length > 0 && (
+              {(otherEvents.length > 0 || (showUpcoming && !loading)) && (
                 <div className="section">
-                  <div className="detail-h">{viewMode === "week" ? "This week" : isCurrentMonth ? "Upcoming" : MONTH_NAMES[viewMonth - 1]}</div>
+                  <div className="detail-h">{viewMode === "week" ? "This week" : showUpcoming ? "Upcoming" : MONTH_NAMES[viewMonth - 1]}</div>
+                  {otherEvents.length === 0 ? (
+                    <div style={{ padding: "10px 0", fontSize: 13, color: "var(--fg-tertiary)" }}>Nothing else coming up</div>
+                  ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
                     {otherEvents.map(e => {
                       const label = parseLocalDate(e.date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -551,16 +667,17 @@ export default function CalendarPage() {
                         <div key={e.id} className="evt-card" style={canManage ? { cursor: "pointer" } : undefined}
                           onClick={canManage ? () => setEditingEvent(e) : undefined} title={canManage ? "Click to edit" : undefined}>
                           <div className="et">
-                            <span className={`ss-dot ${slugFor(e)}`} />
+                            {eventDot(e)}
                             {e.title}
                           </div>
                           <div className="em">
-                            <Clock />{label}{e.timeRange ? ` · ${e.timeRange}` : ""}{e.siteNames.length ? ` · ${e.siteNames.join(", ")}` : ""}
+                            <Clock />{label}{e.timeRange ? ` · ${e.timeRange}` : ""} · {programLabel(e)}{e.siteNames.length ? ` · ${e.siteNames.join(", ")}` : ""}
                           </div>
                         </div>
                       );
                     })}
                   </div>
+                  )}
                 </div>
               )}
             </div>
@@ -576,14 +693,15 @@ export default function CalendarPage() {
           existing={editingEvent}
           onClose={() => { setAddOpen(false); setEditingEvent(null); }}
           onSaved={(e) => {
+            // Keep it if its month is one of the loaded months (next month counts for Upcoming).
             const eDate = parseLocalDate(e.date);
-            const inView = viewMode === "week"
-              ? weekDays.some((d) => d.iso === e.date)
-              : eDate.getMonth() + 1 === viewMonth && eDate.getFullYear() === viewYear;
+            const inView = monthsKey.split(",").includes(`${eDate.getFullYear()}-${eDate.getMonth() + 1}`);
             setEvents((prev) => {
               const rest = prev.filter((x) => x.id !== e.id);
               return inView ? [...rest, e] : rest;
             });
+            // An event saved under a program that is filtered out would seem to vanish on Save.
+            if (hiddenPrograms.has(filterKeyOf(e))) toggleProgram(filterKeyOf(e));
             setAddOpen(false);
             setEditingEvent(null);
           }}

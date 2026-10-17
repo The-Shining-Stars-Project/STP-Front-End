@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   X,
   CalendarDays,
@@ -8,13 +8,14 @@ import {
 } from "lucide-react";
 import { attendanceApi } from "@/lib/api/attendance";
 import { usePrograms } from "@/lib/api/hooks";
-import { ApiError } from "@/lib/api/client";
+import { ApiError, describeApiError } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import type {
   ScheduledSessionDto,
   SessionRosterDto,
   AttendanceStatus,
+  AttendanceNoteDto,
   ProgramSummaryDto,
 } from "@/lib/types/api";
 import {
@@ -28,6 +29,13 @@ import {
 } from "./_components";
 import EmptyState from "../components/EmptyState";
 import EventsPanel from "./_events";
+
+/** The server's notes, plus any saved on this page while a refetch was in flight. */
+function mergeNotes(server: AttendanceNoteDto[], local: AttendanceNoteDto[]): AttendanceNoteDto[] {
+  const known = new Set(server.map((n) => n.id));
+  const extra = local.filter((n) => !known.has(n.id));
+  return extra.length ? [...server, ...extra] : server;
+}
 
 export default function AttendancePage() {
   const { isAdmin, canManage } = useAuth();
@@ -55,6 +63,10 @@ export default function AttendancePage() {
   const [noteText, setNoteText] = useState("");
   const [noteType, setNoteType] = useState<"observation" | "concern">("observation");
   const [savingNote, setSavingNote] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
+  const [refreshingNotes, setRefreshingNotes] = useState(false);
+  // Only the latest note-box refetch may update its spinner and error.
+  const noteRefreshSeq = useRef(0);
 
   // submit
   const [submitting, setSubmitting] = useState(false);
@@ -115,12 +127,31 @@ export default function AttendancePage() {
     loadCards(date); // refresh counts/status
   }
 
-  const refreshSelected = useCallback(async () => {
+  // Re-reads the open roster (GET — never creates). Throws so each caller decides what to show.
+  // notesOnly takes just the notes and keeps local statuses, so a mark that is still saving
+  // can't flip back to the server's older value.
+  const refreshSelected = useCallback(async (notesOnly = false) => {
     if (!selected) return;
-    try {
-      const roster = await attendanceApi.getProgramSession(selected.programId, date);
-      setSelected(roster);
-    } catch { /* leave as-is */ }
+    const roster = await attendanceApi.getProgramSession(selected.programId, date);
+    setSelected((s) => {
+      // A late response must not reopen a roster the user has since left.
+      if (!s || s.sessionId !== roster.sessionId) return s;
+      if (notesOnly) {
+        const serverNotes = new Map(roster.entries.map((e) => [e.recordId, e.notes]));
+        return {
+          ...s,
+          entries: s.entries.map((e) => {
+            const server = serverNotes.get(e.recordId);
+            return server ? { ...e, notes: mergeNotes(server, e.notes) } : e;
+          }),
+        };
+      }
+      const localNotes = new Map(s.entries.map((e) => [e.recordId, e.notes]));
+      return {
+        ...roster,
+        entries: roster.entries.map((e) => ({ ...e, notes: mergeNotes(e.notes, localNotes.get(e.recordId) ?? []) })),
+      };
+    });
   }, [selected, date]);
 
   async function mark(recordId: string, target: AttendanceStatus) {
@@ -146,7 +177,8 @@ export default function AttendancePage() {
         // 409 = submitted-and-locked or an edit collision (#26) — the backend's
         // message says which; fall back to the lock copy.
         setError(e.detail ?? "This session was submitted and is now locked.");
-        refreshSelected();
+        // The lock message above is what matters; a failed refresh leaves the roster as it was.
+        refreshSelected().catch(() => {});
       }
     }
   }
@@ -154,40 +186,61 @@ export default function AttendancePage() {
   function openNote(recordId: string) {
     setNoteText("");
     setNoteType("observation");
+    setNoteError(null);
     setNoteFor(recordId);
+    // The roster is a one-shot load, so a note saved from another login since then wouldn't
+    // show here (client, Oct 2026). Refetch whenever the note box opens.
+    const seq = ++noteRefreshSeq.current;
+    setRefreshingNotes(true);
+    refreshSelected(true)
+      .catch((e: unknown) => {
+        if (seq === noteRefreshSeq.current)
+          setNoteError(describeApiError(e, "Couldn't check for newer notes. Showing the notes from when this session was opened."));
+      })
+      .finally(() => { if (seq === noteRefreshSeq.current) setRefreshingNotes(false); });
   }
 
   async function saveNote() {
     if (!noteFor || !noteText.trim()) return;
     setSavingNote(true);
+    setNoteError(null);
     try {
       const created = await attendanceApi.addNote(noteFor, { content: noteText.trim(), noteType });
+      // Deduped by id: the refetch openNote starts can land after this POST committed and
+      // already carry the new note, which would otherwise show twice ("Notes (2)" for one).
       setSelected((s) =>
-        s ? { ...s, entries: s.entries.map((e) => (e.recordId === noteFor ? { ...e, notes: [...e.notes, created] } : e)) } : s
+        s ? { ...s, entries: s.entries.map((e) => (e.recordId === noteFor ? { ...e, notes: mergeNotes(e.notes, [created]) } : e)) } : s
       );
       setNoteFor(null);
-    } catch {
-      /* keep modal open */
+    } catch (e) {
+      // Keep the modal open with the text intact so nothing typed is lost.
+      setNoteError(describeApiError(e, "Couldn't save the note. Your text is still here; try again."));
     } finally {
       setSavingNote(false);
     }
   }
 
+  // Any assigned teacher can submit; only a coordinator or admin can reopen, so confirm first.
   async function submit() {
     if (!selected) return;
+    if (!window.confirm(
+      `Submit attendance for ${selected.programName}, ${prettyDate(date)}? Marks lock after submitting; a coordinator can reopen it.`
+    )) return;
     setSubmitting(true);
     try {
       await attendanceApi.submitSession(selected.sessionId);
       setSelected((s) => (s ? { ...s, status: "submitted" } : s));
-    } catch {
-      setError("Couldn't submit attendance. Try again.");
+      setError(null);
+    } catch (e) {
+      setError(describeApiError(e, "Couldn't submit attendance. Try again."));
     } finally {
       setSubmitting(false);
     }
   }
 
-  // Management only. Every unlock is audited server-side (attendance.session.reopen), and
-  // every mark that follows is audited as usual — attendance drives funding.
+  // Management only (ManagementWrite + program scope). Every unlock is audited server-side
+  // (attendance.session.reopen), and every mark that follows is audited as usual — attendance
+  // drives funding.
   async function reopen() {
     if (!selected) return;
     if (!window.confirm("Reopen this session for edits? The change is recorded in the audit log.")) return;
@@ -196,8 +249,13 @@ export default function AttendancePage() {
       await attendanceApi.reopenSession(selected.sessionId);
       setSelected((s) => (s ? { ...s, status: "open", submittedAt: null } : s));
       setError(null);
-    } catch {
-      setError("Couldn't reopen the session. Try again.");
+    } catch (e) {
+      // Coordinators are program-scoped: one not assigned to this program gets a bare 403.
+      setError(
+        e instanceof ApiError && e.status === 403 && !e.detail
+          ? "Only an admin, or a coordinator assigned to this program, can reopen this session."
+          : describeApiError(e, "Couldn't reopen the session. Try again.")
+      );
     } finally {
       setSubmitting(false);
     }
@@ -401,6 +459,8 @@ export default function AttendancePage() {
           noteType={noteType}
           setNoteType={setNoteType}
           saving={savingNote}
+          refreshing={refreshingNotes}
+          error={noteError}
           onClose={() => setNoteFor(null)}
           onSave={saveNote}
         />

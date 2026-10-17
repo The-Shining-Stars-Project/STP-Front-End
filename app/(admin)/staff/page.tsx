@@ -3,11 +3,13 @@
 import { useState, useEffect, useRef, Suspense } from "react";
 import { staffRoleLabel, staffRoleAvatarClass } from "@/lib/staffRoles";
 import { useSearchParams } from "next/navigation";
-import { parseLocalDate } from "@/lib/format";
+import { localDateKey, parseLocalDate } from "@/lib/format";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Download,
   UserPlus,
+  UserCheck,
+  UserX,
   CheckCircle2,
   Loader,
   CircleDot,
@@ -23,13 +25,15 @@ import {
 import { staffApi } from "@/lib/api/staff";
 import { DOCUMENT_ACCEPT, documentProblem, formatBytes, saveBlob } from "@/lib/files";
 import { auditApi } from "@/lib/api/audit";
-import { useStaff, usePrograms, useChecklistTemplate, queryKeys } from "@/lib/api/hooks";
+import { useStaff, usePrograms, useUsers, useChecklistTemplate, queryKeys } from "@/lib/api/hooks";
 import LoadError from "@/app/components/LoadError";
-import { ApiError } from "@/lib/api/client";
+import { describeApiError } from "@/lib/api/client";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import {
   AddStaffModal,
   EditStaffModal,
   EditChecklistModal,
+  ConfirmFormerModal,
   DEFAULT_TEMPLATE,
   type TemplateSection,
   type AddStaffForm,
@@ -44,6 +48,7 @@ import type {
   StaffRole,
   OnboardingItemDto,
   ChecklistTemplateItemDto,
+  UserDto,
 } from "@/lib/types/api";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -135,16 +140,31 @@ function StaffPageInner() {
   const staffList: StaffSummaryDto[] = staffQ.data ?? [];
   const programs: ProgramSummaryDto[] = programsQ.data ?? [];
   const loading = staffQ.isPending || programsQ.isPending;
-  // ?expand=<full name> deep-links straight to a staff member's checklist
-  // (e.g. from a program page); it wins over the in-progress default below.
+  // Which login(s) each record backs. The page is admin-only, as is the user list.
+  const { isAdmin, loading: authLoading } = useAuth();
+  const usersQ = useUsers(!authLoading && isAdmin);
+  const loginsByStaff: Map<string, UserDto[]> | null = usersQ.data
+    ? usersQ.data.reduce((map, u) => {
+        if (u.staffMemberId) map.set(u.staffMemberId, [...(map.get(u.staffMemberId) ?? []), u]);
+        return map;
+      }, new Map<string, UserDto[]>())
+    : null;
+  // ?expand=<staff id> deep-links straight to a staff member's checklist (e.g. from a program
+  // page); it wins over the in-progress default below.
   const expandParam = useSearchParams().get("expand");
+  // Rows are keyed by id, not name: two records can share a name (a duplicate hire, or a
+  // rehire), and resolving by name once opened the wrong Scott Davis. Older links carry a name,
+  // so fall back to it, preferring an active record over a former one.
+  const deepLinked = expandParam
+    ? staffList.find((s) => s.id === expandParam)
+      ?? staffList.find((s) => s.fullName === expandParam && !s.isFormer)
+      ?? staffList.find((s) => s.fullName === expandParam)
+    : undefined;
   // "auto" = expand the deep-linked row, else the first in-progress onboarding
   // once data arrives; explicit values take over as soon as the user toggles.
   const [expandedRaw, setExpandedRaw] = useState<string | null | "auto">("auto");
-  // Rows are keyed by id, not name: two records can share a name (a duplicate hire, or a
-  // rehire). The ?expand= link still names the person and resolves to the first match.
   const expanded = expandedRaw === "auto"
-    ? (expandParam ? staffList.find((s) => s.fullName === expandParam)?.id ?? null : null)
+    ? deepLinked?.id
       ?? staffList.find((s) => s.onboardingProgressPct > 0 && s.onboardingProgressPct < 100)?.id ?? null
     : expandedRaw;
   const [detailCache, setDetailCache] = useState<Record<string, StaffDetailDto>>({});
@@ -164,10 +184,13 @@ function StaffPageInner() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [auditWarning, setAuditWarning] = useState<string | null>(null);
   const [filter, setFilter] = useState<StaffFilter>("all");
-  // Active vs former staff — former members keep their checklist history.
-  const [view, setView] = useState<"active" | "former">("active");
+  // Active vs former staff — former members keep their checklist history. Until the user picks a
+  // tab, a deep link to a former record opens the Former tab so the expanded row is visible.
+  const [viewRaw, setView] = useState<"active" | "former" | "auto">("auto");
+  const view: "active" | "former" = viewRaw === "auto" ? (deepLinked?.isFormer ? "former" : "active") : viewRaw;
   const [statusSavingId, setStatusSavingId] = useState<string | null>(null);
   const [editing, setEditing] = useState<StaffSummaryDto | null>(null);
+  const [confirmingFormer, setConfirmingFormer] = useState<StaffSummaryDto | null>(null);
   // Item ids with an in-flight toggle request, so a double-click can't race.
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
 
@@ -232,7 +255,7 @@ function StaffPageInner() {
     try {
       await action();
     } catch (e) {
-      setSaveError(e instanceof ApiError && e.detail ? e.detail : fallback);
+      setSaveError(describeApiError(e, fallback));
     } finally {
       setTogglingIds((prev) => { const next = new Set(prev); next.delete(item.id); return next; });
     }
@@ -248,7 +271,7 @@ function StaffPageInner() {
       // The summary list's progress % is served by the backend — refresh it.
       queryClient.invalidateQueries({ queryKey: queryKeys.staff, exact: true });
     } catch (e) {
-      setSaveError(e instanceof ApiError && e.detail ? e.detail : "Couldn't update the checklist item — try again.");
+      setSaveError(describeApiError(e, "Couldn't update the checklist item — try again."));
     } finally {
       setTogglingIds((prev) => { const next = new Set(prev); next.delete(item.id); return next; });
     }
@@ -260,7 +283,7 @@ function StaffPageInner() {
       const saved = await staffApi.updateChecklistTemplate(sectionsToTemplate(sections));
       queryClient.setQueryData(queryKeys.checklistTemplate, saved);
     } catch (e) {
-      setSaveError(e instanceof ApiError && e.detail ? e.detail : "Couldn't save the checklist template — try again.");
+      setSaveError(describeApiError(e, "Couldn't save the checklist template — try again."));
     }
   }
 
@@ -331,7 +354,7 @@ function StaffPageInner() {
       queryClient.invalidateQueries({ queryKey: queryKeys.staff, exact: true });
     } catch (e) {
       // A failed save must not fabricate a placeholder row (#35).
-      setSaveError(e instanceof ApiError && e.detail ? e.detail : "Couldn't add the staff member — try again.");
+      setSaveError(describeApiError(e, "Couldn't add the staff member — try again."));
     }
     closeModal();
   }
@@ -347,7 +370,7 @@ function StaffPageInner() {
       setDetailCache((prev) => ({ ...prev, [staffId]: updated }));
       queryClient.invalidateQueries({ queryKey: queryKeys.staff, exact: true });
     } catch (e) {
-      setSaveError(e instanceof ApiError && e.detail ? e.detail : "Couldn't update the completion date — try again.");
+      setSaveError(describeApiError(e, "Couldn't update the completion date — try again."));
     } finally {
       setTogglingIds((prev) => { const next = new Set(prev); next.delete(item.id); return next; });
     }
@@ -362,7 +385,7 @@ function StaffPageInner() {
       setDetailCache((prev) => ({ ...prev, [staffId]: updated }));
       queryClient.invalidateQueries({ queryKey: queryKeys.staff, exact: true });
     } catch (e) {
-      setSaveError(e instanceof ApiError && e.detail ? e.detail : "Couldn't update the item — try again.");
+      setSaveError(describeApiError(e, "Couldn't update the item — try again."));
     } finally {
       setTogglingIds((prev) => { const next = new Set(prev); next.delete(item.id); return next; });
     }
@@ -380,24 +403,39 @@ function StaffPageInner() {
       setDetailCache((prev) => ({ ...prev, [staffId]: updated }));
       queryClient.invalidateQueries({ queryKey: queryKeys.staff, exact: true });
     } catch (e) {
-      setSaveError(e instanceof ApiError && e.detail ? e.detail : "Couldn't update the due date — try again.");
+      setSaveError(describeApiError(e, "Couldn't update the due date — try again."));
     } finally {
       setTogglingIds((prev) => { const next = new Set(prev); next.delete(item.id); return next; });
     }
   }
 
-  async function handleSetFormer(s: StaffSummaryDto, makeFormer: boolean) {
+  async function saveFormerStatus(s: StaffSummaryDto, makeFormer: boolean) {
+    // The viewer's local day: toISOString() is the UTC day, which after ~5 pm Pacific stamped
+    // tomorrow as the end date.
+    const updated = await staffApi.update(s.id, makeFormer ? { endDate: localDateKey() } : { clearEndDate: true });
+    setDetailCache((prev) => ({ ...prev, [s.id]: updated }));
+    queryClient.invalidateQueries({ queryKey: queryKeys.staff, exact: true });
+  }
+
+  // Restoring gives access back, so it stays one click; marking former goes through
+  // ConfirmFormerModal, which names the logins that lose access.
+  async function handleRestore(s: StaffSummaryDto) {
     setStatusSavingId(s.id);
     setSaveError(null);
     try {
-      const today = new Date().toISOString().slice(0, 10);
-      const updated = await staffApi.update(s.id, makeFormer ? { endDate: today } : { clearEndDate: true });
-      setDetailCache((prev) => ({ ...prev, [s.id]: updated }));
-      queryClient.invalidateQueries({ queryKey: queryKeys.staff, exact: true });
+      await saveFormerStatus(s, false);
     } catch (e) {
-      setSaveError(e instanceof ApiError && e.detail ? e.detail : "Couldn't update the staff member's status — try again.");
+      setSaveError(describeApiError(e, "Couldn't update the staff member's status — try again."));
     } finally {
       setStatusSavingId(null);
+    }
+  }
+
+  async function handleConfirmFormer(s: StaffSummaryDto) {
+    try {
+      await saveFormerStatus(s, true);
+    } catch (e) {
+      throw new Error(describeApiError(e, `Couldn't mark ${s.fullName} as former — try again.`));
     }
   }
 
@@ -407,7 +445,7 @@ function StaffPageInner() {
       setDetailCache((prev) => ({ ...prev, [s.id]: updated }));
       queryClient.invalidateQueries({ queryKey: queryKeys.staff, exact: true });
     } catch (e) {
-      throw new Error(e instanceof ApiError && e.detail ? e.detail : "Couldn't save the changes — try again.");
+      throw new Error(describeApiError(e, "Couldn't save the changes — try again."));
     }
   }
 
@@ -571,15 +609,26 @@ function StaffPageInner() {
               const newHire = isNewHire(s.startDate);
               const progLabel = s.programNames.length > 0 ? s.programNames.join(", ") : "No programs";
               const detail = detailCache[s.id];
+              const logins = loginsByStaff?.get(s.id) ?? [];
 
-              const badgeEl = s.isFormer ? (
-                <span className="ss-badge is-former">Former{s.endDate ? ` · ${formatShort(s.endDate)}` : ""}</span>
-              ) : pct === 100 ? (
-                <span className="ss-badge is-active"><CheckCircle2 />Complete</span>
-              ) : pct === 0 ? (
-                <span className="ss-badge is-attention"><CircleDot />Just started</span>
+              // Two separate badges: whether the person is active (the only thing that affects
+              // their login's access) and how far their paperwork is. One badge doing both read
+              // "Just started" / "In progress" as an employment status.
+              const statusEl = s.isFormer ? (
+                <span className="ss-badge is-former" title="Former: any login linked to this record sees no stars, classes or rosters.">
+                  <UserX />Former{s.endDate ? ` · ${formatShort(s.endDate)}` : ""}
+                </span>
               ) : (
-                <span className="ss-badge is-prospective"><Loader />In progress</span>
+                <span className="ss-badge is-active" title="Active staff member. Onboarding progress never affects access.">
+                  <UserCheck />Active
+                </span>
+              );
+              const badgeEl = pct === 100 ? (
+                <span className="ss-badge is-active"><CheckCircle2 />Onboarding complete</span>
+              ) : pct === 0 ? (
+                <span className="ss-badge is-attention"><CircleDot />Onboarding just started</span>
+              ) : (
+                <span className="ss-badge is-prospective"><Loader />Onboarding in progress</span>
               );
 
               return (
@@ -592,6 +641,15 @@ function StaffPageInner() {
                         {newHire && <span className="newhire-tag">New hire</span>}
                       </div>
                       <div className="sub">{staffRoleLabel(s.role)} · {progLabel} · {hireLabel}{s.tShirtSize ? ` · Shirt ${s.tShirtSize}` : ""}</div>
+                      {/* Which sign-in this record backs. Hidden until the user list loads, so a
+                          failed fetch never reads as "No login". */}
+                      {loginsByStaff && (
+                        <div className="sub" style={logins.length === 0 ? { color: "var(--fg-tertiary)" } : undefined}>
+                          {logins.length === 0
+                            ? "No login"
+                            : `Login${logins.length > 1 ? "s" : ""}: ${logins.map((u) => `${u.email}${u.isActive ? "" : " (disabled)"}`).join(", ")}`}
+                        </div>
+                      )}
                     </div>
                     <div className="sacc-prog">
                       <div className="ss-progress">
@@ -599,7 +657,10 @@ function StaffPageInner() {
                       </div>
                       <span className="pct">{pct}%</span>
                     </div>
-                    {badgeEl}
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+                      {statusEl}
+                      {badgeEl}
+                    </div>
                     <span className="sacc-chev"><ChevronDown /></span>
                   </div>
 
@@ -635,8 +696,12 @@ function StaffPageInner() {
                                     <span className="ss-checkrow-date">Not applicable</span>
                                   ) : (
                                     <>
-                                      {item.expiryDate && (
-                                        <span className={parseLocalDate(item.expiryDate) < new Date() ? "ss-date-expired" : "ss-date-expiring"}>
+                                      {/* A completed ONE-TIME item is done: its due date no longer
+                                          matters (Pam, Oct 2026: checked items still said "Due Sep 16").
+                                          Renewable items (CPR, TB) keep "Renew by" after completion,
+                                          because completing them is what sets the next deadline. */}
+                                      {item.expiryDate && (item.renewalMonths || !item.isCompleted) && (
+                                        <span className={item.expiryDate.slice(0, 10) < localDateKey() ? "ss-date-expired" : "ss-date-expiring"}>
                                           <AlertCircle />{item.renewalMonths ? "Renew by" : "Due"} {formatShort(item.expiryDate)}
                                         </span>
                                       )}
@@ -656,8 +721,11 @@ function StaffPageInner() {
                                         )
                                       ) : (
                                         <>
-                                          {!item.expiryDate && item.completedDate && (
-                                            <span className="ss-checkrow-date">{formatShort(item.completedDate)}</span>
+                                          {item.isCompleted && (
+                                            <span className="ss-checkrow-date" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                              <CheckCircle2 style={{ width: 13, height: 13 }} />
+                                              Done{item.completedDate ? ` ${formatShort(item.completedDate)}` : ""}
+                                            </span>
                                           )}
                                           <input
                                             type="date"
@@ -746,7 +814,7 @@ function StaffPageInner() {
                           className="ss-btn"
                           type="button"
                           disabled={statusSavingId === s.id}
-                          onClick={() => handleSetFormer(s, !s.isFormer)}
+                          onClick={() => (s.isFormer ? handleRestore(s) : setConfirmingFormer(s))}
                           style={s.isFormer ? undefined : { color: "var(--danger)" }}
                         >
                           {statusSavingId === s.id ? "Saving…" : s.isFormer ? "Restore to active" : "Mark as former"}
@@ -840,6 +908,16 @@ function StaffPageInner() {
           programs={programs}
           onClose={() => setEditing(null)}
           onSave={(dto) => handleEditSave(editing, dto)}
+        />
+      )}
+
+      {confirmingFormer && (
+        <ConfirmFormerModal
+          key={confirmingFormer.id}
+          member={confirmingFormer}
+          logins={loginsByStaff ? loginsByStaff.get(confirmingFormer.id) ?? [] : null}
+          onClose={() => setConfirmingFormer(null)}
+          onConfirm={() => handleConfirmFormer(confirmingFormer)}
         />
       )}
 

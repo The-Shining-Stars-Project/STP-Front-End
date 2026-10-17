@@ -20,12 +20,13 @@ import { tasksApi } from "@/lib/api/tasks";
 import { useProjects, useStaff, queryKeys } from "@/lib/api/hooks";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import LoadError from "@/app/components/LoadError";
-import { ApiError } from "@/lib/api/client";
+import { describeApiError } from "@/lib/api/client";
 import type {
   ProjectDto,
   ProjectTaskDto,
   StaffSummaryDto,
   ProjectType,
+  TaskStatus as ApiTaskStatus,
 } from "@/lib/types/api";
 
 import {
@@ -92,6 +93,17 @@ const PRIO_API_MAP: Record<Prio, string> = {
   low:  "Low",
 };
 
+// The starting statuses the API accepts on create (anything else is a 400).
+const STATUS_API_MAP: Record<AddTaskForm["status"], ApiTaskStatus> = {
+  upcoming:   "Upcoming",
+  inprogress: "InProgress",
+  blocked:    "Blocked",
+};
+
+/** Assignee filter values besides a staff id. */
+const ALL_ASSIGNEES = "all";
+const UNASSIGNED = "unassigned";
+
 function formatDueDate(dateStr: string | null): string {
   if (!dateStr) return "—";
   const d = parseLocalDate(dateStr);
@@ -148,7 +160,8 @@ function dtoToProject(dto: ProjectDto, staffList: StaffSummaryDto[]): Project {
 export default function TasksPage() {
   // Cached + shared via React Query (#34).
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  // canManage mirrors the API's ManagementWrite policy, which POST /api/projects requires.
+  const { user, canManage } = useAuth();
   const projectsQ = useProjects();
   const staffQ = useStaff();
   const staffList: StaffSummaryDto[] = staffQ.data ?? [];
@@ -156,19 +169,42 @@ export default function TasksPage() {
     () => (projectsQ.data ?? []).map((p) => dtoToProject(p, staffQ.data ?? [])),
     [projectsQ.data, staffQ.data]
   );
+  // Everyone who can be filtered on or assigned: current staff only, by name.
+  const activeStaff = useMemo(
+    () => (staffQ.data ?? []).filter((s) => !s.isFormer).sort((a, b) => a.fullName.localeCompare(b.fullName)),
+    [staffQ.data]
+  );
   const loading = projectsQ.isPending || staffQ.isPending;
   // Keyed by project id; projects start collapsed.
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
   const [doneTasks, setDoneTasks] = useState<Record<string, boolean>>({});
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<AddTaskForm>(EMPTY_TASK_FORM);
+  const [taskSaving, setTaskSaving] = useState(false);
+  const [taskError, setTaskError] = useState<string | null>(null);
   const [projModalOpen, setProjModalOpen] = useState(false);
   const [projForm, setProjForm] = useState<NewProjectForm>(EMPTY_PROJECT_FORM);
+  const [projSaving, setProjSaving] = useState(false);
+  const [projError, setProjError] = useState<string | null>(null);
   const [view, setView] = useState<"project" | "my" | "all">("project");
   const [typeFilter, setTypeFilter] = useState<"all" | "production" | "staff" | "admin" | "event">("all");
-  const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
+  // ALL_ASSIGNEES, UNASSIGNED, or a staff id.
+  const [assigneeFilter, setAssigneeFilter] = useState<string>(ALL_ASSIGNEES);
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // New task can be clicked before the projects list lands (first load, or a retry from the
+  // modal). With exactly one project there is nothing to choose, so pick it once it arrives, as
+  // openModal does when the list is already here. Adjusted during render, not in an effect.
+  if (modalOpen && form.projectIdx === null && projects.length === 1) {
+    setForm((f) => ({ ...f, projectIdx: 0, projectLocked: true }));
+  }
+
+  function matchesAssignee(t: Task): boolean {
+    if (assigneeFilter === ALL_ASSIGNEES) return true;
+    if (assigneeFilter === UNASSIGNED) return t.assignedToId === null;
+    return t.assignedToId === assigneeFilter;
+  }
 
   // derived stats
   const allTasks = projects.flatMap((p) => p.tasks);
@@ -208,23 +244,33 @@ export default function TasksPage() {
       clearOverride();
     } catch (e) {
       clearOverride();
-      setSaveError(e instanceof ApiError && e.detail ? e.detail : "Couldn't update the task — try again.");
+      setSaveError(describeApiError(e, "Couldn't update the task — try again."));
     }
   }
 
   function openModal(targetProjectIdx: number | null = null) {
-    setForm({ ...EMPTY_TASK_FORM, projectIdx: targetProjectIdx });
+    // With a single project there is nothing to choose — pick it so Add task isn't blocked.
+    const projectIdx = targetProjectIdx ?? (projects.length === 1 ? 0 : null);
+    // Filtering by a person means "their tasks": a new task starts assigned to them.
+    const assigneeId = activeStaff.some((s) => s.id === assigneeFilter) ? assigneeFilter : "";
+    setForm({ ...EMPTY_TASK_FORM, projectIdx, projectLocked: projectIdx !== null, assigneeId });
+    setTaskError(null);
     setModalOpen(true);
   }
   function closeModal() { setModalOpen(false); }
 
   function openProjModal() {
     setProjForm(EMPTY_PROJECT_FORM);
+    setProjError(null);
     setProjModalOpen(true);
   }
 
+  // Both modals stay open until the save resolves: closing first lost what was typed whenever
+  // the save failed, and the error landed in a banner that could be scrolled out of view.
   async function handleProjectSubmit() {
-    setProjModalOpen(false);
+    if (projSaving || !projForm.title.trim()) return;
+    setProjSaving(true);
+    setProjError(null);
     try {
       await tasksApi.createProject({
         title: projForm.title.trim(),
@@ -233,18 +279,21 @@ export default function TasksPage() {
         scope: projForm.scope.trim() || undefined,
         dueDate: projForm.due || undefined,
       });
+      setProjModalOpen(false);
       queryClient.invalidateQueries({ queryKey: queryKeys.projects });
     } catch (e) {
-      setSaveError(e instanceof ApiError && e.detail ? e.detail : "Couldn't create the project — try again.");
+      setProjError(describeApiError(e, "Couldn't create the project — try again."));
+    } finally {
+      setProjSaving(false);
     }
   }
 
   async function handleSubmit() {
-    if (form.projectIdx === null) return;
+    if (form.projectIdx === null || taskSaving) return;
     const proj = projects[form.projectIdx];
-    setCollapsedMap((prev) => ({ ...prev, [proj.id]: false }));
-    closeModal();
-
+    if (!proj || !form.name.trim()) return;
+    setTaskSaving(true);
+    setTaskError(null);
     try {
       await tasksApi.addTask(proj.id, {
         projectId: proj.id,
@@ -253,11 +302,16 @@ export default function TasksPage() {
         assignedToId: form.assigneeId || undefined,
         priority: PRIO_API_MAP[form.prio] as "High" | "Medium" | "Low",
         dueDate: form.due || undefined,
+        status: STATUS_API_MAP[form.status],
       });
+      setCollapsedMap((prev) => ({ ...prev, [proj.id]: false }));
+      closeModal();
       queryClient.invalidateQueries({ queryKey: queryKeys.projects });
     } catch (e) {
       // A failed save must not silently look successful (#35).
-      setSaveError(e instanceof ApiError && e.detail ? e.detail : "Couldn't save the task — try again.");
+      setTaskError(describeApiError(e, "Couldn't save the task — try again."));
+    } finally {
+      setTaskSaving(false);
     }
   }
 
@@ -273,9 +327,11 @@ export default function TasksPage() {
             <button className={view === "my" ? "is-active" : ""} onClick={() => setView("my")}>My tasks</button>
             <button className={view === "all" ? "is-active" : ""} onClick={() => setView("all")}>All tasks</button>
           </div>
-          <button className="ss-btn" type="button" onClick={openProjModal}>
-            <FolderPlus className="ss-btn-icon" />New project
-          </button>
+          {canManage && (
+            <button className="ss-btn" type="button" onClick={openProjModal}>
+              <FolderPlus className="ss-btn-icon" />New project
+            </button>
+          )}
           <button className="ss-btn ss-btn-primary" type="button" onClick={() => openModal(null)}>
             <Plus className="ss-btn-icon" />New task
           </button>
@@ -295,24 +351,25 @@ export default function TasksPage() {
             </span>
           ))}
           <span style={{ width: 1, height: 22, background: "var(--border-strong)", margin: "0 4px" }} />
-          <span
-            className={`ss-chip${assigneeFilter === "all" ? " is-active" : ""}`}
-            style={{ cursor: "pointer" }}
-            onClick={() => setAssigneeFilter("all")}
-          >
-            All assignees
-          </span>
-          {staffList.slice(0, 3).map((s) => (
-            <span
-              key={s.id}
-              className={`ss-chip${assigneeFilter === s.id ? " is-active" : ""}`}
-              style={{ cursor: "pointer" }}
-              onClick={() => setAssigneeFilter(assigneeFilter === s.id ? "all" : s.id)}
+          {/* Every current staff member, not just the first three chips that used to fit. */}
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--fg-secondary)" }}>
+            Assignee
+            <select
+              value={assigneeFilter}
+              onChange={(e) => setAssigneeFilter(e.target.value)}
+              style={{
+                minHeight: 34, border: `${assigneeFilter === ALL_ASSIGNEES ? "0.5px" : "1px"} solid ${assigneeFilter === ALL_ASSIGNEES ? "var(--border-hover)" : "var(--primary)"}`,
+                borderRadius: "var(--r-md)", padding: "6px 10px", fontSize: 13, color: "var(--fg)",
+                background: "var(--surface)", outline: "none", maxWidth: 240,
+              }}
             >
-              <span className={`ss-avatar ${staffRoleAvatarClass(s.role)} sm`} style={{ width: 18, height: 18, fontSize: 9 }}>{s.initials}</span>
-              {s.fullName}
-            </span>
-          ))}
+              <option value={ALL_ASSIGNEES}>All assignees</option>
+              <option value={UNASSIGNED}>Unassigned</option>
+              {activeStaff.map((s) => (
+                <option key={s.id} value={s.id}>{s.fullName}</option>
+              ))}
+            </select>
+          </label>
           <span style={{ width: 1, height: 22, background: "var(--border-strong)", margin: "0 4px" }} />
           <span
             className="ss-chip"
@@ -359,7 +416,9 @@ export default function TasksPage() {
           />
         ) : projects.length === 0 ? (
           <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>
-            No projects yet — create one to get started.
+            {canManage
+              ? "No projects yet — create one to get started."
+              : "No projects yet. Tasks live under a project, and a coordinator can create one."}
           </div>
         ) : view !== "project" ? (() => {
           if (view === "my" && !myStaffId) return (
@@ -373,7 +432,7 @@ export default function TasksPage() {
             .filter(({ p, t }) => {
               if (view === "my" && t.assignedToId !== myStaffId) return false;
               if (typeFilter !== "all" && p.type[0] !== typeFilter) return false;
-              if (assigneeFilter !== "all" && t.assignedToId !== assigneeFilter) return false;
+              if (!matchesAssignee(t)) return false;
               if (overdueOnly && !(t.overdue || t.status === "overdue")) return false;
               return true;
             });
@@ -434,7 +493,7 @@ export default function TasksPage() {
             .map((p, idx) => ({ p, idx }))
             .filter(({ p }) => {
               if (typeFilter !== "all" && p.type[0] !== typeFilter) return false;
-              if (assigneeFilter !== "all" && !p.tasks.some((t) => t.assignedToId === assigneeFilter)) return false;
+              if (assigneeFilter !== ALL_ASSIGNEES && !p.tasks.some(matchesAssignee)) return false;
               if (overdueOnly && !p.tasks.some((t) => t.overdue || t.status === "overdue")) return false;
               return true;
             });
@@ -447,6 +506,8 @@ export default function TasksPage() {
 
           return filteredItems.map(({ p, idx }) => {
           const ProjIcon = p.icon;
+          // A person (or Unassigned) filter narrows the rows too, not just which projects show.
+          const rows = p.tasks.filter(matchesAssignee);
           return (
             <div className={`proj${isCollapsed(p.id) ? " is-collapsed" : ""}`} key={p.id}>
               <div className="proj-head" onClick={() => toggleProject(p.id)}>
@@ -474,10 +535,10 @@ export default function TasksPage() {
                 <div className="proj-due">{p.due}</div>
               </div>
               <div className="proj-body">
-                {p.tasks.length > 0 && (
+                {rows.length > 0 && (
                   <table className="tbl">
                     <tbody>
-                      {p.tasks.map((t) => {
+                      {rows.map((t) => {
                         const isDone = doneTasks[t.id] ?? t.status === "done";
                         const Tag = TAG[t.status].icon;
                         return (
@@ -525,7 +586,7 @@ export default function TasksPage() {
           );
         });})()}
 
-        {view === "project" && (
+        {view === "project" && canManage && (
           <button className="create-proj" type="button" onClick={openProjModal}>
             <FolderPlus />Create new project
           </button>
@@ -533,10 +594,16 @@ export default function TasksPage() {
       </div>
 
       {modalOpen && (
-        <AddTaskModal form={form} setForm={setForm} projects={projects} staffList={staffList} onClose={closeModal} onSubmit={handleSubmit} />
+        <AddTaskModal form={form} setForm={setForm} projects={projects}
+          projectsLoading={projectsQ.isPending}
+          projectsError={projectsQ.isError ? projectsQ.error : null}
+          onRetryProjects={() => { void projectsQ.refetch(); }}
+          staffList={staffList}
+          saving={taskSaving} error={taskError} onClose={closeModal} onSubmit={handleSubmit} />
       )}
-      {projModalOpen && (
-        <NewProjectModal form={projForm} setForm={setProjForm} onClose={() => setProjModalOpen(false)} onSubmit={handleProjectSubmit} />
+      {projModalOpen && canManage && (
+        <NewProjectModal form={projForm} setForm={setProjForm}
+          saving={projSaving} error={projError} onClose={() => setProjModalOpen(false)} onSubmit={handleProjectSubmit} />
       )}
     </div>
   );

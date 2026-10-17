@@ -71,7 +71,8 @@ const SECTIONS: NavSection[] = [
       { href: "/roster", label: "Roster", icon: ClipboardList },
       { href: "/tracker", label: "Weekly Data", icon: PenLine },
       { href: "/planning", label: "Per-Star Planning", icon: Goal },
-      { href: "/year-calendar", label: "Year Calendar", icon: CalendarRange },
+      // Renamed from "Year Calendar" (client, Oct 2026); the /year-calendar URL is unchanged.
+      { href: "/year-calendar", label: "Annual Planning", icon: CalendarRange },
       { href: "/cohort-rollup", label: "Cohort Roll-Up", icon: PieChart },
       { href: "/games", label: "Curriculum Resources", icon: Gamepad2 },
       { href: "/games/develop", label: "To Develop", icon: Lightbulb },

@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { X, Check, Star } from "lucide-react";
 import { gamesApi } from "@/lib/api/games";
+import { describeApiError } from "@/lib/api/client";
+import { useEscapeKey } from "@/lib/useEscapeKey";
 import type {
   ObjectiveAreaDto,
   ProgramSummaryDto,
@@ -77,6 +79,8 @@ export default function GameEditorModal({
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Close with X, Cancel or Escape — never the backdrop (typed data was lost that way).
+  useEscapeKey(onClose, !saving);
 
   const subById = new Map(areas.flatMap((a) => a.subSkills.map((s) => [s.id, { name: s.name, color: a.colorHex }] as const)));
 
@@ -119,8 +123,8 @@ export default function GameEditorModal({
       const saved = editing ? await gamesApi.update(game!.id, dto) : await gamesApi.create(dto);
       onSaved(saved);
       onClose();
-    } catch {
-      setError("Couldn't save the activity. Check the API and try again.");
+    } catch (e) {
+      setError(describeApiError(e, "Couldn't save the activity. Try again."));
       setSaving(false);
     }
   }
@@ -133,7 +137,7 @@ export default function GameEditorModal({
         {/* header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
           <h3 style={{ fontSize: "var(--fs-h3)", fontWeight: "var(--w-medium)", margin: 0 }}>{editing ? "Edit activity" : "Add activity"}</h3>
-          <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4 }}>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4 }}>
             <X style={{ width: 16, height: 16 }} />
           </button>
         </div>
@@ -236,12 +240,12 @@ export default function GameEditorModal({
           <Field label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" }} /></Field>
           <Field label="Best for / variations"><textarea value={bestFor} onChange={(e) => setBestFor(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" }} /></Field>
           <Field label="When to use"><input value={whenToUse} onChange={(e) => setWhenToUse(e.target.value)} style={inputStyle} /></Field>
-
-          {error && <div style={{ fontSize: "var(--fs-meta)", color: "var(--danger-text)" }}>{error}</div>}
         </div>
 
         {/* footer */}
-        <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end", flexShrink: 0 }}>
+        <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap", flexShrink: 0 }}>
+          {/* Next to Save, not at the end of the scrolling body, so a failed save is seen. */}
+          {error && <div role="alert" style={{ flex: "1 1 200px", fontSize: "var(--fs-meta)", color: "var(--danger-text)" }}>{error}</div>}
           <button className="ss-btn" type="button" onClick={onClose}>Cancel</button>
           <button className="ss-btn ss-btn-primary" type="button" onClick={handleSave} disabled={!canSave}>
             <Check className="ss-btn-icon" />{saving ? "Saving…" : editing ? "Save changes" : "Add activity"}

@@ -75,7 +75,7 @@ export default function SkillsFrameworkPage() {
           <Sparkles />
           <span>
             The shared skill taxonomy behind every program: six colour-coded objective
-            areas and the universal sub-skills beneath them. The Games Library tags
+            areas and the universal sub-skills beneath them. Curriculum Resources tags
             games to these skills, the weekly tracker measures against them, and the
             cohort roll-up aggregates by them. Reference data — maintained centrally.
           </span>
@@ -199,7 +199,7 @@ function AreaGroup({ title, subtitle, list, prefix }: {
                 {area.subSkills.length === 0 ? (
                   <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-start", color: "var(--fg-tertiary)", fontSize: "var(--fs-meta)", lineHeight: "var(--lh-body)" }}>
                     <Layers style={{ width: 14, height: 14, flexShrink: 0, marginTop: 3 }} />
-                    <span>A Games Library tag for cross-cutting activities — measured skills live in the five sections.</span>
+                    <span>A Curriculum Resources tag for cross-cutting activities — measured skills live in the five sections.</span>
                   </div>
                 ) : (
                   area.subSkills.map((s) => (

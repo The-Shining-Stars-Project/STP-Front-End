@@ -137,6 +137,17 @@
 }
 .ss-btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 .ss-btn-icon { width: 15px; height: 15px; }
+/* Disabled buttons must LOOK disabled. Tailwind's preflight forces opacity:1 on buttons, so
+   without this a disabled primary button was indistinguishable from an enabled one — the
+   "Add task does nothing" and "Edit Script Save does nothing" reports (Sep + Oct 2026). */
+.ss-btn:disabled,
+.ss-btn[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+/* Hover must not restyle a disabled button. Each filled variant keeps its own fill, or its white
+   text vanishes on a surface background (the danger variant lives in admin.css). */
+.ss-btn:disabled:hover { border-color: var(--border); background: var(--surface); }
+.ss-btn-primary:disabled:hover { background: var(--primary); border-color: var(--primary); }
+.ss-btn-danger:disabled:hover { background: var(--danger); border-color: var(--danger); }
+.ss-btn-dark:disabled:hover { background: var(--fg); border-color: var(--fg); }
 
 /* ============================================================
    3. STAT CELLS
@@ -206,6 +217,9 @@
 .ss-chip--static { cursor: default; pointer-events: none; }
 
 /* ---- Program dots (reusable) ------------------------------ */
+/* Base size so a dot renders outside a chip too (calendar detail/upcoming cards were empty
+   0×0 spans). Chip and other contexts may still override. */
+.ss-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .ss-dot.mjc { background: var(--mjc); }
 .ss-dot.pathways { background: var(--pathways); }
 .ss-dot.manteca { background: var(--manteca); }

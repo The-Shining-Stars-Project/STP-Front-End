@@ -5,9 +5,13 @@ import { localMonthKey } from "@/lib/format";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { BarChart3 } from "lucide-react";
 import { cohortApi } from "@/lib/api/cohort";
+import { describeApiError } from "@/lib/api/client";
 import { useMyPrograms } from "@/lib/api/hooks";
 import ProgramPills from "../components/ProgramPills";
-import type { CohortRollUpDto, CohortRollUpRowDto, ProgramSummaryDto, CohortStarDto, ProgressLevel } from "@/lib/types/api";
+import type { CohortRollUpDto, CohortRollUpRowDto, ProgramSummaryDto, ProgramTrack, CohortStarDto, ProgressLevel } from "@/lib/types/api";
+
+const TRACK_LABEL: Record<ProgramTrack, string> = { PartTime: "Part-time", Pathways: "Pathways" };
+const trackLabel = (t: ProgramTrack) => TRACK_LABEL[t] ?? "Skills";
 
 // Ordinal "mastery" ramp (light -> dark = more developed). Validated: CVD ΔE 17.2,
 // monotonic lightness; the light step's contrast is relieved by direct count labels + gaps.
@@ -95,15 +99,18 @@ export default function CohortRollUpPage() {
   // The data on hand is stamped with the (month, program) it answers; "loading" is simply
   // that stamp being behind the filters, so no effect has to flip a flag.
   const [loadedKey, setLoadedKey] = useState("");
-  const [error, setError] = useState(false);
   const scopeKey = `${month}|${programId ?? ""}`;
+  // A failure is stamped with its scope too, so picking another month or program retries
+  // instead of keeping the old error on screen.
+  const [failure, setFailure] = useState<{ key: string; error: unknown } | null>(null);
+  const error = failure?.key === scopeKey ? failure.error : null;
   const loading = loadedKey !== scopeKey && !error;
 
   useEffect(() => {
     let active = true;
     cohortApi.getRollUp(month, programId ?? undefined)
-      .then((d) => { if (active) { setData(d); setError(false); setLoadedKey(scopeKey); } })
-      .catch(() => { if (active) setError(true); });
+      .then((d) => { if (active) { setData(d); setFailure(null); setLoadedKey(scopeKey); } })
+      .catch((err) => { if (active) setFailure({ key: scopeKey, error: err ?? new Error("Roll-up failed") }); });
     return () => { active = false; };
   }, [month, programId, scopeKey]);
 
@@ -115,29 +122,42 @@ export default function CohortRollUpPage() {
   const openCell = openCellRaw?.scope === scopeKey ? openCellRaw : null;
   const [cellStars, setCellStars] = useState<CohortStarDto[] | null>(null);
   const [cellLoading, setCellLoading] = useState(false);
+  const [cellError, setCellError] = useState<string | null>(null);
 
   function toggleCell(subSkillId: string, level: ProgressLevel) {
     const same = openCell?.subSkillId === subSkillId && openCell?.level === level;
     if (same) { setOpenCell(null); setCellStars(null); return; }
     setOpenCell({ scope: scopeKey, subSkillId, level });
     setCellStars(null);
+    setCellError(null);
     setCellLoading(true);
     cohortApi.getStarsAtLevel(month, subSkillId, level, programId || undefined)
       .then(setCellStars)
-      .catch(() => setCellStars([]))
+      // A failed lookup must not read as "no stars".
+      .catch((err) => setCellError(describeApiError(err, "Couldn't load these stars. Try again.")))
       .finally(() => setCellLoading(false));
   }
 
-  const sections = useMemo(() => {
-    const map = new Map<number, { name: string; color: string; rows: CohortRollUpRowDto[] }>();
-    data?.rows.forEach((r) => {
-      if (!map.has(r.sectionNumber)) map.set(r.sectionNumber, { name: r.objectiveAreaName, color: r.objectiveAreaColorHex, rows: [] });
-      map.get(r.sectionNumber)!.rows.push(r);
-    });
-    return [...map.entries()].sort((a, b) => a[0] - b[0]).map(([n, v]) => ({ section: n, ...v }));
+  // One table per objective area, in the order the rows arrive (track, then area, then
+  // skill). Grouping by section number mixed the frameworks: Part-time and Pathways both
+  // number their sections 1–5, so Pathways pillars showed up inside Part-time areas. Under
+  // "All programs" the areas sit in a Part-time block and a Pathways block.
+  const tracks = useMemo(() => {
+    const byTrack = new Map<ProgramTrack, { track: ProgramTrack; levels: number; areas: Map<string, { id: string; name: string; color: string; rows: CohortRollUpRowDto[] }> }>();
+    for (const r of data?.rows ?? []) {
+      let t = byTrack.get(r.track);
+      if (!t) byTrack.set(r.track, (t = { track: r.track, levels: 0, areas: new Map() }));
+      t.levels += r.scoredCount;
+      let area = t.areas.get(r.objectiveAreaId);
+      if (!area) t.areas.set(r.objectiveAreaId, (area = { id: r.objectiveAreaId, name: r.objectiveAreaName, color: r.objectiveAreaColorHex, rows: [] }));
+      area.rows.push(r);
+    }
+    return [...byTrack.values()].map((t) => ({ ...t, areas: [...t.areas.values()] }));
   }, [data]);
+  const showTrackHeadings = programId === null;
 
-  const totalConfirmed = data?.rows.reduce((n, r) => n + r.scoredCount, 0) ?? 0;
+  // Every (star, skill) level this month, whether derived from scores or confirmed by a teacher.
+  const totalLevels = data?.rows.reduce((n, r) => n + r.scoredCount, 0) ?? 0;
   const skillsWithData = data?.rows.filter((r) => r.scoredCount > 0).length ?? 0;
 
   return (
@@ -166,7 +186,7 @@ export default function CohortRollUpPage() {
         <div className="board-stats">
           <div className="board-stat"><span className="num">{data?.participantCount ?? 0}</span><span className="label">Stars Scored</span></div>
           <div className="board-stat"><span className="num">{skillsWithData}</span><span className="label">Skills With Data</span></div>
-          <div className="board-stat"><span className="num">{totalConfirmed}</span><span className="label">Levels From Scores</span></div>
+          <div className="board-stat" title="Star-and-skill levels this month — derived from weekly scores, or confirmed in a star's tracker"><span className="num">{totalLevels}</span><span className="label">Levels Recorded</span></div>
           <div className="board-stat"><span className="num">{data?.confirmedCount ?? 0}</span><span className="label">Confirmed By Teachers</span></div>
         </div>
 
@@ -180,78 +200,94 @@ export default function CohortRollUpPage() {
         </div>
 
         {error ? (
-          <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>Couldn&apos;t load the roll-up — check the API and try again.</div>
+          <div role="alert" style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>Couldn&apos;t load the roll-up: {describeApiError(error, "check your connection and try again.")}</div>
         ) : loading ? (
           <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>Loading…</div>
-        ) : totalConfirmed === 0 ? (
+        ) : totalLevels === 0 ? (
           <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>
             No weekly scores for {data?.programName ?? "any program"} this month yet. Enter scores on the Weekly Data page and the cohort appears here.
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
-            {sections.map((sec) => (
-              <div key={sec.section}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: "var(--space-2)" }}>
-                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: sec.color }} />
-                  <h3 style={{ fontSize: "var(--fs-h3)", fontWeight: "var(--w-medium)", margin: 0 }}>{sec.name}</h3>
-                </div>
-                <div style={{ overflowX: "auto", border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", background: "var(--surface)" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
-                    <thead>
-                      <tr style={{ borderBottom: "0.5px solid var(--border)" }}>
-                        {["Skill", "Distribution", "Nov", "Int", "Exp", "Scored", "Most common"].map((h, i) => (
-                          <th key={h} style={{ textAlign: i > 1 && i < 6 ? "center" : "left", padding: "8px 12px", fontSize: "var(--fs-label)", textTransform: "uppercase", letterSpacing: "var(--ls-label)", color: "var(--fg-tertiary)", fontWeight: "var(--w-regular)", whiteSpace: "nowrap" }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sec.rows.map((r) => (
-                        <Fragment key={r.subSkillId}>
-                        <tr style={{ borderBottom: "0.5px solid var(--border)" }}>
-                          <td style={{ padding: "8px 12px", fontSize: "var(--fs-body)", whiteSpace: "nowrap" }}>{r.subSkillName}</td>
-                          <td style={{ padding: "8px 12px", minWidth: 160 }}><DistributionBar row={r} /></td>
-                          {(["Novice", "Intermediate", "Expert"] as const).map((lvl) => (
-                            <CountCell
-                              key={lvl}
-                              n={lvl === "Novice" ? r.noviceCount : lvl === "Intermediate" ? r.intermediateCount : r.expertCount}
-                              level={lvl}
-                              subSkillId={r.subSkillId}
-                              isOpen={openCell?.subSkillId === r.subSkillId && openCell?.level === lvl}
-                              onToggle={toggleCell}
-                            />
-                          ))}
-                          <td style={{ padding: "8px 12px", textAlign: "center", fontVariantNumeric: "tabular-nums", color: "var(--fg-secondary)" }}>{r.scoredCount}</td>
-                          <td style={{ padding: "8px 12px" }}><LevelBadge level={r.mostCommonLevel} /></td>
-                        </tr>
-                        {openCell?.subSkillId === r.subSkillId && (
-                          <tr style={{ borderBottom: "0.5px solid var(--border)", background: "var(--bg-tertiary)" }}>
-                            <td colSpan={7} style={{ padding: "10px 12px" }}>
-                              <div style={{ fontSize: "var(--fs-label)", textTransform: "uppercase", letterSpacing: "var(--ls-label)", color: "var(--fg-tertiary)", marginBottom: 6 }}>
-                                {r.subSkillName} · {openCell.level}
-                              </div>
-                              {cellLoading ? (
-                                <span style={{ fontSize: 13, color: "var(--fg-tertiary)" }}>Loading…</span>
-                              ) : !cellStars || cellStars.length === 0 ? (
-                                <span style={{ fontSize: 13, color: "var(--fg-tertiary)" }}>No stars to show.</span>
-                              ) : (
-                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                                  {cellStars.map((st) => (
-                                    <span key={st.participantId} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px 3px 3px", borderRadius: "var(--r-pill)", border: "0.5px solid var(--border)", background: "var(--surface)", fontSize: 13 }}>
-                                      <span className="ss-avatar teacher sm">{st.initials}</span>
-                                      {st.fullName}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </td>
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
+            {tracks.map((t) => (
+              <section key={t.track ?? "all"} aria-label={showTrackHeadings ? `${trackLabel(t.track)} programs` : undefined} style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
+                {showTrackHeadings && (
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, borderBottom: "0.5px solid var(--border)", paddingBottom: "var(--space-2)" }}>
+                    <h2 style={{ fontSize: "var(--fs-h2)", fontWeight: "var(--w-medium)", margin: 0 }}>{trackLabel(t.track)}</h2>
+                    <span style={{ fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)" }}>
+                      {t.areas.length} objective area{t.areas.length === 1 ? "" : "s"} · {t.levels} level{t.levels === 1 ? "" : "s"} recorded
+                    </span>
+                  </div>
+                )}
+                {showTrackHeadings && t.levels === 0 ? (
+                  <div style={{ fontSize: 13, color: "var(--fg-tertiary)" }}>No weekly scores for {trackLabel(t.track)} programs this month yet.</div>
+                ) : t.areas.map((area) => (
+                  <div key={area.id}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: "var(--space-2)" }}>
+                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: area.color }} />
+                      <h3 style={{ fontSize: "var(--fs-h3)", fontWeight: "var(--w-medium)", margin: 0 }}>{area.name}</h3>
+                    </div>
+                    <div style={{ overflowX: "auto", border: "0.5px solid var(--border)", borderRadius: "var(--r-lg)", background: "var(--surface)" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+                        <thead>
+                          <tr style={{ borderBottom: "0.5px solid var(--border)" }}>
+                            {["Skill", "Distribution", "Nov", "Int", "Exp", "Scored", "Most common"].map((h, i) => (
+                              <th key={h} style={{ textAlign: i > 1 && i < 6 ? "center" : "left", padding: "8px 12px", fontSize: "var(--fs-label)", textTransform: "uppercase", letterSpacing: "var(--ls-label)", color: "var(--fg-tertiary)", fontWeight: "var(--w-regular)", whiteSpace: "nowrap" }}>{h}</th>
+                            ))}
                           </tr>
-                        )}
-                        </Fragment>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                        </thead>
+                        <tbody>
+                          {area.rows.map((r) => (
+                            <Fragment key={r.subSkillId}>
+                            <tr style={{ borderBottom: "0.5px solid var(--border)" }}>
+                              <td style={{ padding: "8px 12px", fontSize: "var(--fs-body)", whiteSpace: "nowrap" }}>{r.subSkillName}</td>
+                              <td style={{ padding: "8px 12px", minWidth: 160 }}><DistributionBar row={r} /></td>
+                              {(["Novice", "Intermediate", "Expert"] as const).map((lvl) => (
+                                <CountCell
+                                  key={lvl}
+                                  n={lvl === "Novice" ? r.noviceCount : lvl === "Intermediate" ? r.intermediateCount : r.expertCount}
+                                  level={lvl}
+                                  subSkillId={r.subSkillId}
+                                  isOpen={openCell?.subSkillId === r.subSkillId && openCell?.level === lvl}
+                                  onToggle={toggleCell}
+                                />
+                              ))}
+                              <td style={{ padding: "8px 12px", textAlign: "center", fontVariantNumeric: "tabular-nums", color: "var(--fg-secondary)" }}>{r.scoredCount}</td>
+                              <td style={{ padding: "8px 12px" }}><LevelBadge level={r.mostCommonLevel} /></td>
+                            </tr>
+                            {openCell?.subSkillId === r.subSkillId && (
+                              <tr style={{ borderBottom: "0.5px solid var(--border)", background: "var(--bg-tertiary)" }}>
+                                <td colSpan={7} style={{ padding: "10px 12px" }}>
+                                  <div style={{ fontSize: "var(--fs-label)", textTransform: "uppercase", letterSpacing: "var(--ls-label)", color: "var(--fg-tertiary)", marginBottom: 6 }}>
+                                    {r.subSkillName} · {openCell.level}
+                                  </div>
+                                  {cellLoading ? (
+                                    <span style={{ fontSize: 13, color: "var(--fg-tertiary)" }}>Loading…</span>
+                                  ) : cellError ? (
+                                    <span role="alert" style={{ fontSize: 13, color: "var(--danger)" }}>{cellError}</span>
+                                  ) : !cellStars || cellStars.length === 0 ? (
+                                    <span style={{ fontSize: 13, color: "var(--fg-tertiary)" }}>No stars to show.</span>
+                                  ) : (
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                      {cellStars.map((st) => (
+                                        <span key={st.participantId} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px 3px 3px", borderRadius: "var(--r-pill)", border: "0.5px solid var(--border)", background: "var(--surface)", fontSize: 13 }}>
+                                          <span className="ss-avatar teacher sm">{st.initials}</span>
+                                          {st.fullName}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                            </Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </section>
             ))}
           </div>
         )}

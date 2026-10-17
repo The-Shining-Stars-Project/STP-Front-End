@@ -21,6 +21,7 @@ import {
   Unlock,
   CalendarClock,
   CalendarOff,
+  AlertTriangle,
   type LucideIcon,
 } from "lucide-react";
 import { attendanceLabel, isManagementStatus } from "@/lib/attendanceStatus";
@@ -71,6 +72,9 @@ export function prettyDate(yyyyMMdd: string) {
 
 // ── Note modal ────────────────────────────────────────────────────────────────
 
+/** AttendanceNotes.Content column limit. Longer notes used to fail without a word (client, Oct 2026). */
+export const NOTE_MAX_LENGTH = 1000;
+
 export function NoteModal({
   entry,
   dateLabel,
@@ -79,6 +83,8 @@ export function NoteModal({
   noteType,
   setNoteType,
   saving,
+  refreshing = false,
+  error = null,
   onClose,
   onSave,
 }: {
@@ -89,11 +95,16 @@ export function NoteModal({
   noteType: "observation" | "concern";
   setNoteType: (v: "observation" | "concern") => void;
   saving: boolean;
+  /** True while the roster is refetched so notes saved from another login show up. */
+  refreshing?: boolean;
+  /** A failed save (or refresh), already run through describeApiError. */
+  error?: string | null;
   onClose: () => void;
   onSave: () => void;
 }) {
   useEscapeKey(onClose, !saving);
   const panelRef = useDialogFocus<HTMLDivElement>();
+  const nearLimit = noteText.length >= NOTE_MAX_LENGTH - 100;
 
   return (
         <div
@@ -112,9 +123,17 @@ export function NoteModal({
               </button>
             </div>
 
-            {entry.notes.length > 0 && (
+            {(entry.notes.length > 0 || refreshing) && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div className="ss-label">Existing notes</div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <div className="ss-label">Existing notes</div>
+                  {refreshing && (
+                    <span role="status" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--fg-tertiary)" }}>
+                      <Loader2 style={{ width: 11, height: 11, animation: "spin 1s linear infinite" }} />
+                      Checking for new notes…
+                    </span>
+                  )}
+                </div>
                 {entry.notes.map((n) => (
                   <div key={n.id} style={{ border: "0.5px solid var(--border)", borderRadius: 8, padding: "8px 10px" }}>
                     <span className={`ss-notetag ${n.noteType}`} style={{ marginBottom: 4, display: "inline-block" }}>{n.noteType}</span>
@@ -131,10 +150,18 @@ export function NoteModal({
                 rows={3}
                 placeholder="What happened today…"
                 value={noteText}
+                maxLength={NOTE_MAX_LENGTH}
+                aria-describedby="note-text-count"
                 onChange={(e) => setNoteText(e.target.value)}
                 style={{ width: "100%", boxSizing: "border-box", border: "0.5px solid var(--border-hover)", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontFamily: "inherit", resize: "vertical", background: "var(--surface)", color: "var(--fg)", outline: "none" }}
                 autoFocus
               />
+              <div
+                id="note-text-count"
+                style={{ marginTop: 4, textAlign: "right", fontSize: 11, fontVariantNumeric: "tabular-nums", color: nearLimit ? "var(--warning-text)" : "var(--fg-tertiary)" }}
+              >
+                {noteText.length} / {NOTE_MAX_LENGTH} characters{noteText.length >= NOTE_MAX_LENGTH ? " (limit reached)" : ""}
+              </div>
             </div>
             <div>
               <div className="ss-label" style={{ marginBottom: 8 }}>Note type</div>
@@ -151,9 +178,15 @@ export function NoteModal({
                 ))}
               </div>
             </div>
+            {error && (
+              <div className="ss-alert is-danger" role="alert" style={{ padding: "8px 12px" }}>
+                <AlertTriangle />
+                <span className="ss-alert-text" style={{ fontSize: 13 }}>{error}</span>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button className="ss-btn" onClick={() => onClose()} disabled={saving}>Cancel</button>
-              <button className="ss-btn ss-btn-primary" onClick={onSave} disabled={!noteText.trim() || saving}>
+              <button className="ss-btn ss-btn-primary" onClick={onSave} disabled={!noteText.trim() || noteText.length > NOTE_MAX_LENGTH || saving}>
                 {saving ? <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} /> : <Check className="ss-btn-icon" />}
                 {saving ? "Saving…" : "Save note"}
               </button>
@@ -295,7 +328,7 @@ export function RosterView({
   locked: boolean;
   total: number; present: number; absent: number; marked: number;
   rescheduled?: number; notScheduled?: number;
-  /** Shows the Rescheduled / Not scheduled buttons (coordinators and admins). */
+  /** Shows the Rescheduled / Not scheduled buttons and Reopen (coordinators and admins). */
   canManage?: boolean;
   filter: Filter; setFilter: (f: Filter) => void;
   query: string; setQuery: (q: string) => void;
@@ -305,7 +338,7 @@ export function RosterView({
   onMark: (recordId: string, target: AttendanceStatus) => void;
   onOpenNote: (recordId: string) => void;
   onSubmit: () => void;
-  /** Unlocks a submitted session. Shown to management only. */
+  /** Unlocks a submitted session. Shown to management only (the endpoint is ManagementWrite). */
   onReopen?: () => void;
   submitting: boolean;
   th: React.CSSProperties;
@@ -551,8 +584,8 @@ export function RosterView({
               )}
             </span>
           ) : (
-            // Any assigned teacher can submit (client, Sep 24). A premature submit is no longer
-            // a problem because a coordinator can Reopen — that button is the management-only part.
+            // Any assigned teacher can submit (client, Sep 24). Reopen stays management-only, so the
+            // page asks for confirmation before submitting (Oct 2026): a teacher can't undo it.
             <button
               className="ss-btn ss-btn-primary"
               disabled={total === 0 || marked < total || submitting}

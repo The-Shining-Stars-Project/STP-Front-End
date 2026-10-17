@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { CalendarRange, CalendarDays, Pencil, X, Check } from "lucide-react";
 import { yearCalendarApi } from "@/lib/api/yearCalendar";
+import { describeApiError } from "@/lib/api/client";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import type { YearCalendarDto, KeyArtsDateDto, CalendarThemeDto, UpsertCalendarThemeDto, ThemeArc } from "@/lib/types/api";
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -15,16 +17,19 @@ const ARC: Record<ThemeArc, { label: string; color: string }> = {
 };
 const ARC_KEYS = Object.keys(ARC) as ThemeArc[];
 
+// Shown to users as "Annual Planning" (renamed Oct 2026); the route and API keep "year-calendar".
 export default function YearCalendarPage() {
+  // Theme edits are ManagementWrite; hide the pencil from everyone else rather than let it 403.
+  const { canManage } = useAuth();
   const [data, setData] = useState<YearCalendarDto | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [editMonth, setEditMonth] = useState<number | null>(null);
 
   useEffect(() => {
     yearCalendarApi.getCalendar()
-      .then((d) => { setData(d); setError(false); })
-      .catch(() => setError(true))
+      .then((d) => { setData(d); setError(null); })
+      .catch((e: unknown) => setError(describeApiError(e, "Check your connection and try again.")))
       .finally(() => setLoading(false));
   }, []);
 
@@ -48,7 +53,7 @@ export default function YearCalendarPage() {
   return (
     <div className="adm-main">
       <div className="adm-topbar">
-        <div className="titles"><h1>Year Calendar</h1></div>
+        <div className="titles"><h1>Annual Planning</h1></div>
         <div className="right" style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           {ARC_KEYS.map((a) => (
             <span key={a} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "var(--fs-meta)", color: "var(--fg-secondary)" }}>
@@ -65,7 +70,7 @@ export default function YearCalendarPage() {
         </div>
 
         {error ? (
-          <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>Couldn&apos;t load the calendar — check the API and try again.</div>
+          <div role="alert" style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>Couldn&apos;t load Annual Planning. {error}</div>
         ) : loading ? (
           <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>Loading…</div>
         ) : (
@@ -86,9 +91,11 @@ export default function YearCalendarPage() {
                           {arc && (
                             <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: "var(--r-pill)", color: `color-mix(in srgb, ${arc.color} 60%, var(--fg))`, background: `color-mix(in srgb, ${arc.color} 14%, var(--surface))`, border: `0.5px solid color-mix(in srgb, ${arc.color} 35%, var(--border))`, whiteSpace: "nowrap" }}>{arc.label}</span>
                           )}
-                          <button type="button" title="Edit theme" onClick={() => setEditMonth(month)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 2, display: "inline-flex" }}>
-                            <Pencil style={{ width: 13, height: 13 }} />
-                          </button>
+                          {canManage && (
+                            <button type="button" title={`Edit ${name} theme`} aria-label={`Edit ${name} theme`} onClick={() => setEditMonth(month)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 2, display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 34, minHeight: 34, margin: "-10px -8px" }}>
+                              <Pencil style={{ width: 13, height: 13 }} />
+                            </button>
+                          )}
                         </div>
                       </div>
                       <div style={{ fontSize: "var(--fs-h3)", fontWeight: "var(--w-medium)", marginTop: 2 }}>{t?.themeTitle ?? "—"}</div>
@@ -134,7 +141,7 @@ export default function YearCalendarPage() {
         )}
       </div>
 
-      {editMonth !== null && (
+      {canManage && editMonth !== null && (
         <ThemeEditor month={editMonth} theme={themesByMonth.get(editMonth) ?? null} onClose={() => setEditMonth(null)} onSaved={onThemeSaved} />
       )}
     </div>
@@ -170,8 +177,7 @@ function ThemeEditor({ month, theme, onClose, onSaved }: { month: number; theme:
       const saved = await yearCalendarApi.upsertTheme({ ...form, themeTitle: form.themeTitle.trim() });
       onSaved(saved);
     } catch (e) {
-      const status = (e as { status?: number })?.status;
-      setError(status === 403 ? "Only managers (Admin or Coordinator) can edit the calendar." : "Couldn't save — check the API and try again.");
+      setError(describeApiError(e, "Couldn't save this month's theme. Try again."));
       setSaving(false);
     }
   }

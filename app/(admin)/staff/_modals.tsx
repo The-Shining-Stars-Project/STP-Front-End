@@ -7,16 +7,20 @@ import { STAFF_ROLES, staffRoleLabel } from "@/lib/staffRoles";
 import { sizeOptions } from "@/lib/tshirtSizes";
 import {
   UserPlus,
+  UserX,
   Check,
   X,
   Plus,
   Trash2,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
 import type {
   ProgramSummaryDto,
   StaffRole,
   StaffSummaryDto,
   UpdateStaffDto,
+  UserDto,
 } from "@/lib/types/api";
 
 import { useDialogFocus } from "@/lib/useDialogFocus";
@@ -546,6 +550,110 @@ export function EditStaffModal({
           <button className="ss-btn" type="button" onClick={onClose} disabled={saving}>Cancel</button>
           <button className="ss-btn ss-btn-primary" type="button" onClick={submit} disabled={!canSave}>
             <Check className="ss-btn-icon" />{saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Mark as former: confirmation ──────────────────────────────────────────────
+// Marking someone former cuts every login linked to the record off from every program on its
+// next request. It used to apply on one click inside the onboarding checklist, which is how a
+// correct record could be retired by mistake (Oct 2026, the duplicate Scott Davis records), so
+// it now says who loses access before it happens.
+
+export function ConfirmFormerModal({
+  member,
+  logins,
+  onClose,
+  onConfirm,
+}: {
+  member: StaffSummaryDto;
+  /** Logins linked to this record; null when the user list couldn't be loaded. */
+  logins: UserDto[] | null;
+  onClose: () => void;
+  /** Throws an Error whose message is shown in the dialog. */
+  onConfirm: () => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // No closing mid-save: the dialog would unmount, and a failed PUT would then show no error
+  // anywhere, leaving the admin thinking the record was retired while it is still Active.
+  useEscapeKey(onClose, !saving);
+  const panelRef = useDialogFocus<HTMLDivElement>();
+
+  // Admin-role logins see every program regardless of their staff link, so only staff logins
+  // actually lose access.
+  const losing = logins?.filter((u) => u.role !== "Admin") ?? [];
+  const keepingAdmin = logins?.filter((u) => u.role === "Admin") ?? [];
+
+  async function confirm() {
+    setSaving(true);
+    setError(null);
+    try {
+      await onConfirm();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : "Couldn't update the staff member's status — try again.");
+      setSaving(false);
+    }
+  }
+
+  const pStyle: React.CSSProperties = { fontSize: 13, color: "var(--fg-secondary)", lineHeight: 1.6, margin: "0 0 10px" };
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "var(--space-4)" }}
+    >
+      <div ref={panelRef} role="alertdialog" aria-modal="true" aria-labelledby="cf-title" style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(440px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
+        <div style={{ padding: "var(--space-4)", overflowY: "auto" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <span style={{ display: "inline-flex", width: 32, height: 32, borderRadius: "50%", background: "var(--danger-fill, #fce8e8)", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <UserX style={{ width: 16, height: 16, color: "var(--danger)" }} />
+            </span>
+            <h3 id="cf-title" style={{ fontSize: 15, fontWeight: 500, margin: 0, flex: 1 }}>Mark {member.fullName} as former?</h3>
+            <button type="button" onClick={onClose} disabled={saving} aria-label="Close" style={{ background: "none", border: "none", cursor: saving ? "default" : "pointer", color: "var(--fg-tertiary)", minWidth: 34, minHeight: 34, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "var(--r-sm)", alignSelf: "flex-start", flexShrink: 0 }}>
+              <X style={{ width: 16, height: 16 }} />
+            </button>
+          </div>
+
+          {logins === null ? (
+            <p style={pStyle}>
+              Any login linked to this staff record will lose access to every program right away: no stars, classes or rosters.
+            </p>
+          ) : losing.length > 0 ? (
+            <p style={pStyle}>
+              <strong>{losing.map((u) => u.email).join(", ")}</strong> will lose access to every
+              program right away: no stars, classes or rosters.
+            </p>
+          ) : (
+            <p style={pStyle}>No staff login is linked to this record, so nobody loses access.</p>
+          )}
+          {keepingAdmin.length > 0 && (
+            <p style={pStyle}>
+              {keepingAdmin.map((u) => u.email).join(", ")} {keepingAdmin.length === 1 ? "is an admin and keeps" : "are admins and keep"} admin access.
+            </p>
+          )}
+          <p style={{ ...pStyle, margin: 0 }}>
+            Their end date is set to today. Their checklist history is kept, and you can restore
+            them from the Former tab.
+          </p>
+        </div>
+
+        {error && (
+          <div role="alert" style={{ margin: "0 var(--space-4) var(--space-3)", padding: "8px 12px", borderRadius: "var(--r-md)", background: "var(--danger-fill, #fce8e8)", color: "var(--danger)", fontSize: 12, display: "flex", alignItems: "flex-start", gap: 6 }}>
+            <AlertCircle style={{ width: 13, height: 13, flexShrink: 0, marginTop: 1 }} />
+            {error}
+          </div>
+        )}
+
+        <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end", flexShrink: 0 }}>
+          <button className="ss-btn" type="button" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="ss-btn" type="button" disabled={saving} onClick={confirm}
+            style={{ background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" }}>
+            {saving ? <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} /> : <UserX className="ss-btn-icon" />}
+            {saving ? "Saving…" : "Mark as former"}
           </button>
         </div>
       </div>

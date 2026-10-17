@@ -1,15 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { UserPlus, AlertCircle, X } from "lucide-react";
+import { UserPlus, AlertCircle, AlertTriangle, X } from "lucide-react";
 import { participantsApi } from "@/lib/api/participants";
-import { ApiError } from "@/lib/api/client";
-import { queryKeys } from "@/lib/api/hooks";
+import { describeApiError } from "@/lib/api/client";
+import { queryKeys, useMyPrograms, useParticipants, usePrograms } from "@/lib/api/hooks";
+import { useAuth } from "@/lib/auth/AuthProvider";
+import { useEscapeKey } from "@/lib/useEscapeKey";
+import { useDialogFocus } from "@/lib/useDialogFocus";
+import LoadError from "@/app/components/LoadError";
 import TShirtSizeInput from "./TShirtSizeInput";
 import type {
   ProgramSummaryDto,
   CreateParticipantDto,
+  ParticipantDetailDto,
   ParticipantStatus,
 } from "@/lib/types/api";
 import ProgramPills from "./ProgramPills";
@@ -60,6 +65,16 @@ const EMPTY_FORM: AddParticipantForm = {
   sdp: "", sdpFms: "", sdpFacilitator: "", sdpFacilitatorEmail: "", sdpStartDate: "",
 };
 
+const STATUS_LABEL: Record<ParticipantStatus, string> = {
+  Active: "Active", Prospective: "Prospective", Attention: "Needs attention", Former: "Former",
+  AuthPending: "Auth pending", Inquiry: "Inquiry", NotInterested: "Not interested",
+};
+
+/** Name key for the duplicate check: trimmed, single-spaced, case-insensitive. */
+function nameKey(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function toInitials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "??";
@@ -71,25 +86,78 @@ export default function AddParticipantModal({
   programs,
   onClose,
   defaultProgramId,
+  onCreated,
 }: {
+  /**
+   * Every program. Admins choose from all of them; other managers only from their own (see below).
+   * Callers pass `data ?? []`, so empty can also mean "still loading" or "failed"; the modal then
+   * reads the programs query itself rather than claim there are no programs.
+   */
   programs: ProgramSummaryDto[];
   onClose: () => void;
   defaultProgramId?: string;
+  /**
+   * Called with the new star after a successful create, just before the modal closes (onClose
+   * still runs). The caller should show where the star went: the modal's default status is
+   * Prospective while lists open on Active, so a silent close made new stars look lost (Oct 2026).
+   */
+  onCreated?: (created: ParticipantDetailDto) => void;
 }) {
   const queryClient = useQueryClient();
+  const { isAdmin } = useAuth();
+  const myProgramsQ = useMyPrograms();
+  // Same cache as the Stars page's list. Only consulted when the `programs` prop is empty.
+  const allProgramsQ = usePrograms();
+  // Cached list, for the duplicate-name check below.
+  const participantsQ = useParticipants();
   const [form, setForm] = useState<AddParticipantForm>({ ...EMPTY_FORM, programId: defaultProgramId ?? "" });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // The name the duplicate warning was shown for; a second click on "Add anyway" confirms it.
+  const [dupWarnedFor, setDupWarnedFor] = useState<string | null>(null);
+  const panelRef = useDialogFocus<HTMLDivElement>();
+  useEscapeKey(onClose, !saving);
 
-  const canSubmit = form.nm.trim().length > 0 && form.programId !== "" && !saving;
+  // Program choices. The API refuses (403) a star in a program the caller isn't assigned to, and
+  // only admins are in every program — so everyone else picks from /programs/mine.
+  // For admins, undefined = the list hasn't loaded (yet, or at all), which is not "no programs".
+  const adminPrograms: ProgramSummaryDto[] | undefined = programs.length > 0 ? programs : allProgramsQ.data;
+  const choices: ProgramSummaryDto[] = isAdmin ? (adminPrograms ?? []) : (myProgramsQ.data ?? []);
+  const choicesReady = isAdmin ? adminPrograms !== undefined : myProgramsQ.isSuccess;
+  const choiceIds = new Set(choices.map((p) => p.id));
+  // A default the caller can't write to is dropped rather than left selected but invisible,
+  // and a manager with exactly one program gets it picked for them.
+  let programId = choicesReady && form.programId && !choiceIds.has(form.programId) ? "" : form.programId;
+  if (!programId && choices.length === 1) programId = choices[0].id;
+  const secondaryProgramId =
+    form.secondaryProgramId && form.secondaryProgramId !== programId && (!choicesReady || choiceIds.has(form.secondaryProgramId))
+      ? form.secondaryProgramId
+      : "";
+
+  // Duplicate check against the stars this user can see (soft-deleted ones aren't listed).
+  const key = nameKey(form.nm);
+  const duplicates = useMemo(
+    () => (key ? (participantsQ.data ?? []).filter((p) => nameKey(p.fullName) === key) : []),
+    [participantsQ.data, key]
+  );
+  const dupWarning = duplicates.length > 0 && dupWarnedFor === key;
+
+  const canSubmit = form.nm.trim().length > 0 && programId !== "" && !saving;
+  const submitHint = saving ? null : !form.nm.trim() ? "Enter the star's full name." : !programId ? "Choose a program." : null;
 
   async function handleSubmit() {
+    // First click on a name that already exists only shows the warning; the second adds.
+    if (duplicates.length > 0 && dupWarnedFor !== key) {
+      setDupWarnedFor(key);
+      setError(null);
+      return;
+    }
     const statusMap: Record<string, ParticipantStatus> = { active: "Active", prospective: "Prospective", authpending: "AuthPending", inquiry: "Inquiry" };
     const dto: CreateParticipantDto = {
       fullName: form.nm.trim(),
       preferredName: form.preferredName.trim() || undefined,
       initials: toInitials(form.nm),
-      programId: form.programId,
+      programId,
       status: statusMap[form.status] ?? "Prospective",
       dateOfBirth: form.dob || undefined,
       startDate: form.startDate || undefined,
@@ -109,7 +177,7 @@ export default function AddParticipantModal({
       contactInRemind: form.remind.trim() || undefined,
       intakeDocsSubmitted: form.intakeDocs,
       hasHighSchoolDiploma: form.diploma === "" ? undefined : form.diploma === "yes",
-      secondaryProgramId: form.secondaryProgramId || undefined,
+      secondaryProgramId: secondaryProgramId || undefined,
       intakeNotes: form.intakeNotes.trim() || undefined,
       emergencyContacts: cleanContacts(form.emergencyContacts),
       isSdpClient: form.sdp === "" ? undefined : form.sdp === "yes",
@@ -120,16 +188,20 @@ export default function AddParticipantModal({
     };
 
     setSaving(true);
+    setError(null);
     try {
-      await participantsApi.create(dto);
+      const created = await participantsApi.create(dto);
       // These caches all hold participant lists — refetch them (#34).
       queryClient.invalidateQueries({ queryKey: queryKeys.participants });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: ["program-detail"] });
+      onCreated?.(created);
       onClose();
     } catch (err) {
-      // The server's own message when it has one (a validation limit, a scope refusal).
-      setError(err instanceof ApiError && err.detail ? err.detail : "Could not save star — check that the backend is running and try again.");
+      // The server's own message when it has one (a validation limit, a scope refusal). A 403
+      // from the policy has no body, and used to read "check that the backend is running",
+      // which invited retries.
+      setError(describeApiError(err, "Could not save the star. Try again, and tell an admin if it keeps failing."));
       setSaving(false);
     }
   }
@@ -145,12 +217,12 @@ export default function AddParticipantModal({
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "var(--space-4)" }}
     >
-      <div style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(560px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="add-star-title" style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(560px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
           <div>
-            <h3 style={{ fontSize: 15, fontWeight: 500, margin: "0 0 2px" }}>Add star</h3>
+            <h3 id="add-star-title" style={{ fontSize: 15, fontWeight: 500, margin: "0 0 2px" }}>Add star</h3>
           </div>
-          <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4, borderRadius: "var(--r-sm)" }}>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", minWidth: 34, minHeight: 34, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "var(--r-sm)" }}>
             <X style={{ width: 16, height: 16 }} />
           </button>
         </div>
@@ -180,29 +252,48 @@ export default function AddParticipantModal({
 
           <div>
             <div className="ss-label" style={{ marginBottom: 8 }}>Program <span style={{ color: "var(--danger)", fontWeight: 400 }}>*</span></div>
-            <ProgramPills
-              programs={programs}
-              value={form.programId || null}
-              onChange={(id) => setForm((f) => ({ ...f, programId: id ?? "", secondaryProgramId: f.secondaryProgramId === id ? "" : f.secondaryProgramId }))}
-            />
+            {!isAdmin && myProgramsQ.isPending ? (
+              <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>Loading your programs…</div>
+            ) : !isAdmin && myProgramsQ.isError ? (
+              <LoadError title="Couldn't load your programs" error={myProgramsQ.error} onRetry={() => myProgramsQ.refetch()} />
+            ) : isAdmin && !adminPrograms && allProgramsQ.isError ? (
+              <LoadError title="Couldn't load programs" error={allProgramsQ.error} onRetry={() => allProgramsQ.refetch()} />
+            ) : isAdmin && !adminPrograms ? (
+              <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>Loading programs…</div>
+            ) : choices.length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--fg-secondary)" }}>
+                {isAdmin
+                  ? "No programs yet — create one on the Programs page first."
+                  : "You aren't assigned to a program yet, so you can't add a star. An admin can add you from a program's Manage staff button."}
+              </div>
+            ) : (
+              <ProgramPills
+                programs={choices}
+                value={programId || null}
+                onChange={(id) => setForm((f) => ({ ...f, programId: id ?? "", secondaryProgramId: f.secondaryProgramId === id ? "" : f.secondaryProgramId }))}
+              />
+            )}
           </div>
 
-          <div>
-            <div className="ss-label" style={{ marginBottom: 8 }}>Also enrolled in <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional — dual enrollment</span></div>
-            <ProgramPills
-              programs={programs}
-              value={form.secondaryProgramId || null}
-              onChange={(id) => setForm((f) => ({ ...f, secondaryProgramId: id ?? "" }))}
-              allLabel="None"
-              exclude={form.programId ? [form.programId] : []}
-            />
-          </div>
+          {/* A second program only makes sense when there is another program to choose. */}
+          {choices.length > 1 && (
+            <div>
+              <div className="ss-label" style={{ marginBottom: 8 }}>Also enrolled in <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional — second program</span></div>
+              <ProgramPills
+                programs={choices}
+                value={secondaryProgramId || null}
+                onChange={(id) => setForm((f) => ({ ...f, secondaryProgramId: id ?? "" }))}
+                allLabel="None"
+                exclude={programId ? [programId] : []}
+              />
+            </div>
+          )}
 
           <div>
             <div className="ss-label" style={{ marginBottom: 8 }}>Status</div>
             <div style={{ display: "flex", gap: 6 }}>
               {([["inquiry", "Inquiry"], ["prospective", "Prospective"], ["active", "Active"], ["authpending", "Auth pending"]] as const).map(([s, label]) => (
-                <button key={s} type="button" className={`ss-chip${form.status === s ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, status: s }))}>
+                <button key={s} type="button" className={`ss-chip${form.status === s ? " is-active" : ""}`} aria-pressed={form.status === s} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, status: s }))}>
                   {label}
                 </button>
               ))}
@@ -342,17 +433,29 @@ export default function AddParticipantModal({
           </div>
         </div>
 
+        {dupWarning && (
+          <div role="alert" style={{ margin: "var(--space-2) var(--space-4) 0", padding: "8px 12px", borderRadius: "var(--r-md)", background: "var(--warning-fill)", color: "var(--warning-text)", fontSize: 12, display: "flex", alignItems: "flex-start", gap: 6 }}>
+            <AlertTriangle style={{ width: 13, height: 13, flexShrink: 0, marginTop: 1 }} />
+            <span>
+              A star named <strong>{duplicates[0].fullName}</strong> already exists (
+              {duplicates.map((d) => `${STATUS_LABEL[d.status] ?? d.status}, ${d.programName}`).join("; ")}
+              ). Add anyway?
+            </span>
+          </div>
+        )}
         {error && (
-          <div style={{ margin: "0 var(--space-4)", padding: "8px 12px", borderRadius: "var(--r-md)", background: "var(--danger-fill, #fce8e8)", color: "var(--danger)", fontSize: 12, display: "flex", alignItems: "flex-start", gap: 6 }}>
+          <div role="alert" style={{ margin: "var(--space-2) var(--space-4) 0", padding: "8px 12px", borderRadius: "var(--r-md)", background: "var(--danger-fill, #fce8e8)", color: "var(--danger)", fontSize: 12, display: "flex", alignItems: "flex-start", gap: 6 }}>
             <AlertCircle style={{ width: 13, height: 13, flexShrink: 0, marginTop: 1 }} />
             {error}
           </div>
         )}
-        <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end", flexShrink: 0 }}>
+        <div style={{ padding: "var(--space-3) var(--space-4)", marginTop: "var(--space-2)", borderTop: "0.5px solid var(--border)", display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end", flexShrink: 0 }}>
+          {/* Says why the button is disabled instead of leaving it to look broken. */}
+          {submitHint && <span style={{ fontSize: 12, color: "var(--fg-tertiary)", marginRight: "auto" }}>{submitHint}</span>}
           <button className="ss-btn" type="button" onClick={onClose}>Cancel</button>
           <button className="ss-btn ss-btn-primary" type="button" onClick={handleSubmit} disabled={!canSubmit}>
             <UserPlus className="ss-btn-icon" />
-            {saving ? "Saving…" : "Add star"}
+            {saving ? "Saving…" : dupWarning ? "Add anyway" : "Add star"}
           </button>
         </div>
       </div>

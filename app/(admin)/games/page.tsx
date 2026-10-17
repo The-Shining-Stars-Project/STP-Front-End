@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X, Sparkles, Target, Plus, Pencil, MapPin } from "lucide-react";
 import { gamesApi } from "@/lib/api/games";
+import { describeApiError } from "@/lib/api/client";
 import { useObjectiveAreas, usePrograms } from "@/lib/api/hooks";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import GameEditorModal from "./_editor";
 import type {
   GameSummaryDto,
@@ -39,13 +41,16 @@ function tierList(tiers: string): string[] {
 }
 
 export default function GamesLibraryPage() {
+  // Creating and editing activities is ManagementWrite. Teachers browse only, so the controls
+  // are hidden for them instead of failing with a 403 (Oct 2026).
+  const { canManage } = useAuth();
   // Cached + shared via React Query (#34).
   // Curriculum activities are tagged against the part-time framework only.
   const areas: ObjectiveAreaDto[] = (useObjectiveAreas().data ?? []).filter((a) => a.track === "PartTime");
   const programs: ProgramSummaryDto[] = usePrograms().data ?? [];
   const [games, setGames] = useState<GameSummaryDto[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [areaId, setAreaId] = useState<string | null>(null);
   const [tier, setTier] = useState<TierChoice | null>(null);
@@ -56,6 +61,11 @@ export default function GamesLibraryPage() {
 
   const [selected, setSelected] = useState<GameSummaryDto | null>(null);
   const [detail, setDetail] = useState<GameDetailDto | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  // Bumped on every open. A late getById answer applies only if no activity was opened since:
+  // otherwise A's error showed in B's drawer, or `detail` became A while the drawer showed B,
+  // so the pencil opened the editor on A and Save updated the wrong activity.
+  const detailReq = useRef(0);
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorGame, setEditorGame] = useState<GameDetailDto | null>(null);
@@ -80,17 +90,24 @@ export default function GamesLibraryPage() {
         q: debouncedQuery || undefined,
         programId: programId ?? undefined,
       })
-      .then((g) => { setGames(g); setError(false); })
-      .catch(() => setError(true))
+      .then((g) => { setGames(g); setError(null); })
+      .catch((e: unknown) => setError(describeApiError(e, "Check your connection and try again.")))
       .finally(() => setLoading(false));
   }, [areaId, tier, category, programId, debouncedQuery, reload]);
 
   async function openGame(game: GameSummaryDto) {
+    const req = ++detailReq.current;
     setSelected(game);
     setDetail(null);
+    setDetailError(null);
     try {
-      setDetail(await gamesApi.getById(game.id));
-    } catch { /* drawer shows summary only */ }
+      const loaded = await gamesApi.getById(game.id);
+      if (req === detailReq.current) setDetail(loaded);
+    } catch (e) {
+      // The drawer still shows the summary; say why the rest is missing.
+      if (req === detailReq.current)
+        setDetailError(describeApiError(e, "Couldn't load the full details for this activity."));
+    }
   }
 
   function onSaved(saved: GameDetailDto) {
@@ -129,9 +146,11 @@ export default function GamesLibraryPage() {
               }}
             />
           </div>
-          <button className="ss-btn ss-btn-primary" type="button" onClick={() => { setEditorGame(null); setEditorOpen(true); }}>
-            <Plus className="ss-btn-icon" />Add activity
-          </button>
+          {canManage && (
+            <button className="ss-btn ss-btn-primary" type="button" onClick={() => { setEditorGame(null); setEditorOpen(true); }}>
+              <Plus className="ss-btn-icon" />Add activity
+            </button>
+          )}
         </div>
       </div>
 
@@ -207,8 +226,8 @@ export default function GamesLibraryPage() {
         </div>
 
         {error ? (
-          <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>
-            Couldn&apos;t load activities. Check that the API is running and try again.
+          <div role="alert" style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>
+            Couldn&apos;t load activities. {error}
           </div>
         ) : !loading && games.length === 0 ? (
           <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>
@@ -290,12 +309,12 @@ export default function GamesLibraryPage() {
                 </div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                {detail && (
-                  <button type="button" onClick={() => { setEditorGame(detail); setEditorOpen(true); }} title="Edit activity" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4, display: "inline-flex" }}>
+                {canManage && detail && (
+                  <button type="button" onClick={() => { setEditorGame(detail); setEditorOpen(true); }} title="Edit activity" aria-label="Edit activity" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4, display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 34, minHeight: 34 }}>
                     <Pencil style={{ width: 15, height: 15 }} />
                   </button>
                 )}
-                <button type="button" onClick={() => setSelected(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4 }}>
+                <button type="button" onClick={() => setSelected(null)} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4 }}>
                   <X style={{ width: 16, height: 16 }} />
                 </button>
               </div>
@@ -330,7 +349,9 @@ export default function GamesLibraryPage() {
               {selected.whenToUse && (
                 <Section label="When to use"><p style={pStyle}>{selected.whenToUse}</p></Section>
               )}
-              {!detail && (
+              {detailError ? (
+                <div role="alert" style={{ fontSize: "var(--fs-meta)", color: "var(--danger-text)" }}>{detailError}</div>
+              ) : !detail && (
                 <div style={{ fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)", display: "inline-flex", alignItems: "center", gap: 6 }}>
                   <Sparkles style={{ width: 13, height: 13 }} />Loading details…
                 </div>
@@ -340,7 +361,7 @@ export default function GamesLibraryPage() {
         </div>
       )}
 
-      {editorOpen && (
+      {canManage && editorOpen && (
         <GameEditorModal
           areas={areas}
           programs={programs}

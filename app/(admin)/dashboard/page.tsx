@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { parseLocalDate } from "@/lib/format";
+import { parseLocalDate, localDateKey } from "@/lib/format";
+import { programTint } from "@/lib/programColor";
 import {
   Plus,
   TrendingUp,
@@ -29,6 +31,7 @@ import { useDashboard, queryKeys } from "@/lib/api/hooks";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { nextPathwaysReportDue } from "@/lib/pathwaysReports";
 import { tasksApi } from "@/lib/api/tasks";
+import { describeApiError } from "@/lib/api/client";
 import LoadError from "@/app/components/LoadError";
 import type {
   ParticipantSummaryDto,
@@ -67,7 +70,8 @@ export default function DashboardPage() {
   // rendering as fake empty stats (#35).
   const dashboard = useDashboard();
   const queryClient = useQueryClient();
-  const { isAdmin } = useAuth();
+  const router = useRouter();
+  const { isAdmin, canManage } = useAuth();
   const loading = dashboard.isPending;
   const [addOpen, setAddOpen] = useState(false);
   const [completingId, setCompletingId] = useState<string | null>(null);
@@ -79,8 +83,9 @@ export default function DashboardPage() {
   const programs: ProgramSummaryDto[] = dashboard.data?.programs ?? [];
   const events: CalendarEventDto[] = dashboard.data?.events ?? [];
 
-  const progSlugById = useMemo(
-    () => Object.fromEntries(programs.map((p) => [p.id, p.slug])),
+  // Event dots are coloured from colorHex: slug CSS skips slugs like "pathways:-manteca".
+  const progColorById = useMemo(
+    () => Object.fromEntries(programs.map((p) => [p.id, p.colorHex])),
     [programs]
   );
 
@@ -208,24 +213,26 @@ export default function DashboardPage() {
 
   // ── Upcoming events ────────────────────────────────────────────────────────────
   const upcoming = useMemo(() => {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // The viewer's LOCAL day: the UTC day (toISOString) flipped to tomorrow after ~5 pm
+    // Pacific and hid the rest of today's events.
+    const todayStr = localDateKey();
     return events
       .filter((e) => e.date >= todayStr)
       .sort((a, b) => a.date.localeCompare(b.date))
       .slice(0, 5)
       .map((e) => {
         const d = parseDate(e.date);
-        const slug = e.programId ? progSlugById[e.programId] : undefined;
+        const colorHex = e.programId ? progColorById[e.programId] : undefined;
         return {
           key: e.id,
           d: String(d.getDate()).padStart(2, "0"),
           month: d.toLocaleDateString("en-US", { month: "short" }),
           title: e.title,
-          slug,
+          dotColor: colorHex ? programTint(colorHex).accent : undefined,
           meta: [e.programName, e.timeRange, e.location].filter(Boolean).join(" · "),
         };
       });
-  }, [events, progSlugById]);
+  }, [events, progColorById]);
 
   // ── Pipeline ──────────────────────────────────────────────────────────────────
   const pipeline = useMemo(
@@ -272,21 +279,24 @@ export default function DashboardPage() {
       // Task lists live in both caches — refetch them (#34).
       await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: queryKeys.projects });
-    } catch {
-      setTaskError("Couldn't mark the task done — try again.");
+    } catch (e) {
+      setTaskError(describeApiError(e, "Couldn't mark the task done — try again."));
     } finally {
       setCompletingId(null);
     }
   }
 
   // ── Staff onboarding ─────────────────────────────────────────────────────────────
+  // Current staff only: former staff no longer onboard (client ask, Oct 2026).
   const staffItems = useMemo(
     () =>
       staff
-        .slice()
+        .filter((s) => !s.isFormer)
         .sort((a, b) => a.onboardingProgressPct - b.onboardingProgressPct)
         .slice(0, 5)
         .map((s) => ({
+          // Keyed by record id: two current staff can share a name (the duplicate Scott Davis).
+          id: s.id,
           nm: s.fullName,
           pct: s.onboardingProgressPct,
           fill: s.onboardingProgressPct === 100 ? "success" : s.onboardingProgressPct >= 50 ? "warning" : "danger",
@@ -323,13 +333,14 @@ export default function DashboardPage() {
           <div className="row tight flex items-center gap-1.5">
             {programs.map((p) => (
               <span className="ss-chip ss-chip--static" key={p.id}>
-                <span className={`ss-dot ${p.slug}`} />
+                <span className="ss-dot" style={{ background: programTint(p.colorHex).accent }} />
                 {p.name}
               </span>
             ))}
           </div>
-          {/* Adding a star is an admin task (client rule) — teachers don't get the button. */}
-          {isAdmin && (
+          {/* Adding a star is management work (the API's ManagementWrite policy) — teachers
+              don't get the button. After saving, open the new star so it can't look lost. */}
+          {canManage && (
             <button className="ss-btn ss-btn-primary" type="button" onClick={() => setAddOpen(true)}>
               <Plus className="ss-btn-icon" />
               Add star
@@ -396,7 +407,7 @@ export default function DashboardPage() {
                     <div className="body">
                       <div className="title">{e.title}</div>
                       <div className="meta">
-                        {e.slug && <span className={`ss-dot ${e.slug}`} />}
+                        {e.dotColor && <span className="ss-dot" aria-hidden="true" style={{ background: e.dotColor }} />}
                         {e.meta}
                       </div>
                     </div>
@@ -448,7 +459,13 @@ export default function DashboardPage() {
         </Widget>
       </div>
 
-      {addOpen && <AddParticipantModal programs={programs} onClose={() => setAddOpen(false)} />}
+      {addOpen && (
+        <AddParticipantModal
+          programs={programs}
+          onClose={() => setAddOpen(false)}
+          onCreated={(created) => router.push(`/students/${created.id}`)}
+        />
+      )}
     </div>
   );
 }

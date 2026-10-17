@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { staffRoleLabel, staffRoleAvatarClass } from "@/lib/staffRoles";
+import { staffOptionLabel } from "@/lib/staffOptionLabel";
+import { programTint } from "@/lib/programColor";
 import { parseLocalDate } from "@/lib/format";
 import Link from "next/link";
 import {
@@ -12,9 +14,11 @@ import {
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { programsApi } from "@/lib/api/programs";
-import { ApiError } from "@/lib/api/client";
+import { ApiError, describeApiError } from "@/lib/api/client";
 import { useStaff, queryKeys } from "@/lib/api/hooks";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { useEscapeKey } from "@/lib/useEscapeKey";
+import { useDialogFocus } from "@/lib/useDialogFocus";
 import LoadError from "@/app/components/LoadError";
 import EnrollStudentModal from "../components/EnrollStudentModal";
 import type { ProgramDetailDto, StaffSummaryDto } from "@/lib/types/api";
@@ -43,6 +47,8 @@ function ManageStaffModal({
   const allStaff: StaffSummaryDto[] = staffQ.data ?? [];
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const panelRef = useDialogFocus<HTMLDivElement>();
+  useEscapeKey(onClose, busyId === null);
 
   async function toggle(s: StaffSummaryDto) {
     const isAssigned = assignedIds.has(s.id);
@@ -54,8 +60,8 @@ function ManageStaffModal({
       // Assignments feed the program detail and per-teacher program scoping (#34).
       await queryClient.invalidateQueries({ queryKey: ["program-detail", slug] });
       queryClient.invalidateQueries({ queryKey: queryKeys.myPrograms });
-    } catch {
-      setError(`Couldn't ${isAssigned ? "remove" : "add"} ${s.fullName} — try again.`);
+    } catch (err) {
+      setError(describeApiError(err, `Couldn't ${isAssigned ? "remove" : "add"} ${s.fullName} — try again.`));
     } finally {
       setBusyId(null);
     }
@@ -65,13 +71,13 @@ function ManageStaffModal({
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "var(--space-4)" }}
     >
-      <div style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(440px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "80vh" }}>
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="manage-staff-title" style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(480px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "80vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
           <div>
-            <h3 style={{ fontSize: 15, fontWeight: 500, margin: "0 0 2px" }}>Manage staff</h3>
+            <h3 id="manage-staff-title" style={{ fontSize: 15, fontWeight: 500, margin: "0 0 2px" }}>Manage staff</h3>
             <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>Add or remove staff for {programName}</div>
           </div>
-          <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4, borderRadius: "var(--r-sm)" }}>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", minWidth: 34, minHeight: 34, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "var(--r-sm)", flexShrink: 0 }}>
             <X style={{ width: 16, height: 16 }} />
           </button>
         </div>
@@ -79,6 +85,10 @@ function ManageStaffModal({
         <div style={{ padding: "var(--space-2) var(--space-4)", overflowY: "auto" }}>
           {staffQ.isPending ? (
             <div style={{ padding: "20px 0", textAlign: "center", fontSize: 13, color: "var(--fg-tertiary)" }}>Loading staff…</div>
+          ) : staffQ.isError ? (
+            <div style={{ padding: "12px 0" }}>
+              <LoadError title="Couldn't load staff" error={staffQ.error} onRetry={() => staffQ.refetch()} />
+            </div>
           ) : allStaff.length === 0 ? (
             <div style={{ padding: "20px 0", textAlign: "center", fontSize: 13, color: "var(--fg-tertiary)" }}>
               No staff yet — add staff members on the Staff page first.
@@ -86,18 +96,24 @@ function ManageStaffModal({
           ) : allStaff.filter((s) => !s.isFormer).map((s) => {
             const isAssigned = assignedIds.has(s.id);
             const busy = busyId === s.id;
+            // Name + role alone made two "Scott Davis — Teacher" records identical; the full
+            // label adds their programs and start month.
+            const label = staffOptionLabel(s);
+            const prefix = `${s.fullName} — `;
+            const details = label.startsWith(prefix) ? label.slice(prefix.length) : label;
             return (
               <div className="list-row" key={s.id}>
                 <span className={`ss-avatar ${staffRoleAvatarClass(s.role)} sm`}>{s.initials}</span>
                 <div className="grow">
                   <div className="nm">{s.fullName}</div>
-                  <div className="sub">{staffRoleLabel(s.role)}</div>
+                  <div className="sub" style={{ whiteSpace: "normal" }}>{details}</div>
                 </div>
                 <button
                   className={`ss-btn${isAssigned ? "" : " ss-btn-primary"}`}
                   type="button"
                   disabled={busy}
                   onClick={() => toggle(s)}
+                  aria-label={`${isAssigned ? "Remove" : "Add"} ${label}`}
                   style={{ minWidth: 96, justifyContent: "center" }}
                 >
                   {busy ? (
@@ -114,7 +130,7 @@ function ManageStaffModal({
         </div>
 
         {error && (
-          <div style={{ margin: "0 var(--space-4) var(--space-3)", padding: "8px 12px", borderRadius: "var(--r-md)", background: "var(--danger-fill, #fce8e8)", color: "var(--danger)", fontSize: 12, display: "flex", alignItems: "flex-start", gap: 6 }}>
+          <div role="alert" style={{ margin: "0 var(--space-4) var(--space-3)", padding: "8px 12px", borderRadius: "var(--r-md)", background: "var(--danger-fill, #fce8e8)", color: "var(--danger)", fontSize: 12, display: "flex", alignItems: "flex-start", gap: 6 }}>
             <AlertCircle style={{ width: 13, height: 13, flexShrink: 0, marginTop: 1 }} />
             {error}
           </div>
@@ -149,12 +165,16 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
   });
   const detail: ProgramDetailDto | null = detailQ.data ?? null;
   const loading = detailQ.isPending;
-  const { isAdmin } = useAuth();
+  const { isAdmin, canManage } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
   const [staffOpen, setStaffOpen] = useState(false);
   const [showFormer, setShowFormer] = useState(false);
 
-  const colorVar  = `var(--${slug})`;
+  // Colours come from the program's own colorHex: slug-named CSS tokens don't exist for programs
+  // created on the Programs page (e.g. `pathways:-manteca`), which rendered uncoloured.
+  const tint      = programTint(detailQ.data?.colorHex);
+  const colorVar  = tint.accent;
+  const avatarStyle: React.CSSProperties = { background: tint.fill, color: tint.text, border: `0.5px solid ${tint.border}` };
 
   // The detail is scoped to the caller's programs: a teacher opening a program they are not
   // assigned to gets a 403, which deserves a sentence rather than an empty page.
@@ -197,7 +217,7 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
       <div className="adm-topbar">
         <div className="titles">
           <h1>
-            <span className={`ss-dot ${slug}`} style={{ marginRight: 8 }} />
+            <span className="ss-dot" style={{ marginRight: 8, background: tint.accent }} aria-hidden="true" />
             {label}
           </h1>
           <span className="date">{new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</span>
@@ -265,28 +285,43 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
                 <div style={{ padding: "20px 0", textAlign: "center", fontSize: 13, color: "var(--fg-tertiary)" }}>
                   No participants yet
                 </div>
-              ) : participants.filter((p) => showFormer || p.status !== "Former").map((p) => (
-                <div className="list-row" key={p.id}>
-                  <span className="ss-avatar sm" style={{ background: `var(--${slug}-fill)`, color: `var(--${slug})`, border: `0.5px solid var(--${slug}-border)` }}>
-                    {p.initials}
-                  </span>
-                  <div className="grow">
-                    <Link href={`/students/${p.id}`} className="nm" style={{ color: "inherit", textDecoration: "none", display: "block" }}>
-                      {p.fullName}
-                    </Link>
-                    {p.hasDocAlerts ? (
-                      <div style={{ fontSize: 11, color: "var(--danger)", display: "flex", alignItems: "center", gap: 3 }}>
-                        <AlertCircle style={{ width: 11, height: 11 }} />Document alert
+              ) : participants.filter((p) => showFormer || p.status !== "Former").map((p) => {
+                // The detail includes stars whose SECOND program is this one; their programId
+                // is still their main program.
+                const isSecond = detail !== null && p.programId !== detail.id;
+                return (
+                  <div className="list-row" key={p.id}>
+                    <span className="ss-avatar sm" style={avatarStyle}>
+                      {p.initials}
+                    </span>
+                    <div className="grow">
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <Link href={`/students/${p.id}`} className="nm" style={{ color: "inherit", textDecoration: "none", display: "block", minWidth: 0 }}>
+                          {p.fullName}
+                        </Link>
+                        {isSecond && (
+                          <span style={{ flexShrink: 0, padding: "1px 8px", borderRadius: "var(--r-pill)", border: "0.5px solid var(--border-hover)", fontSize: 11, color: "var(--fg-secondary)", whiteSpace: "nowrap" }}>
+                            Second program
+                          </span>
+                        )}
                       </div>
-                    ) : (
-                      <div className="sub">{p.status}</div>
-                    )}
+                      {p.hasDocAlerts && (
+                        <div style={{ fontSize: 11, color: "var(--danger)", display: "flex", alignItems: "center", gap: 3 }}>
+                          <AlertCircle style={{ width: 11, height: 11 }} />Document alert
+                        </div>
+                      )}
+                      {isSecond ? (
+                        <div className="sub">Main program: {p.programName}</div>
+                      ) : !p.hasDocAlerts && (
+                        <div className="sub">{STATUS_BADGE[p.status]?.label ?? p.status}</div>
+                      )}
+                    </div>
+                    <span className={`ss-badge ${STATUS_BADGE[p.status]?.cls ?? "is-prospective"}`}>
+                      {(() => { const B = STATUS_BADGE[p.status]; const I = B?.icon ?? Clock; return <><I />{B?.label ?? p.status}</>; })()}
+                    </span>
                   </div>
-                  <span className={`ss-badge ${STATUS_BADGE[p.status]?.cls ?? "is-prospective"}`}>
-                    {(() => { const B = STATUS_BADGE[p.status]; const I = B?.icon ?? Clock; return <><I />{B?.label ?? p.status}</>; })()}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -314,7 +349,7 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
                         <div className="body">
                           <div className="title">{e.title}</div>
                           <div className="meta">
-                            <span className={`ss-dot ${slug}`} />{e.meta ?? e.location}
+                            <span className="ss-dot" style={{ background: tint.accent }} aria-hidden="true" />{e.meta ?? e.location}
                           </div>
                         </div>
                       </div>
@@ -374,16 +409,19 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
             <div className="widget-head">
               <UserCheck className="ico" style={{ color: "var(--primary)" }} />
               <h3>Staff</h3>
-              <button
-                className="ss-btn"
-                type="button"
-                disabled={!detail}
-                onClick={() => setStaffOpen(true)}
-                style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 12 }}
-              >
-                <UserPlus className="ss-btn-icon" />
-                Add / remove
-              </button>
+              {/* Assigning staff is ManagementWrite; for anyone else the button only 403'd. */}
+              {canManage && (
+                <button
+                  className="ss-btn"
+                  type="button"
+                  disabled={!detail}
+                  onClick={() => setStaffOpen(true)}
+                  style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 12 }}
+                >
+                  <UserPlus className="ss-btn-icon" />
+                  Add / remove
+                </button>
+              )}
             </div>
             <div className="widget-body">
               {staff.length === 0 ? (
@@ -394,13 +432,20 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
                 <div className="list-row" key={s.id}>
                   <span className={`ss-avatar ${staffRoleAvatarClass(s.role)} sm`}>{s.initials}</span>
                   <div className="grow">
-                    <Link
-                      href={`/staff?expand=${encodeURIComponent(s.fullName)}`}
-                      className="nm"
-                      style={{ color: "inherit", textDecoration: "none", display: "block" }}
-                    >
-                      {s.fullName}
-                    </Link>
+                    {/* By id, not name: ?expand=<name> opened the FIRST record with that name,
+                        so duplicate "Scott Davis" records opened the wrong one. /staff is
+                        admin-only (proxy.ts), so others get plain text rather than a bounce. */}
+                    {isAdmin ? (
+                      <Link
+                        href={`/staff?expand=${encodeURIComponent(s.id)}`}
+                        className="nm"
+                        style={{ color: "inherit", textDecoration: "none", display: "block" }}
+                      >
+                        {s.fullName}
+                      </Link>
+                    ) : (
+                      <div className="nm">{s.fullName}</div>
+                    )}
                     <div className="sub">{staffRoleLabel(s.role)}</div>
                   </div>
                   <span className="ss-badge is-active"><Check />Active</span>
@@ -424,7 +469,6 @@ export default function ProgramHub({ slug }: { slug: ProgramSlug }) {
         <EnrollStudentModal
           programId={detail.id}
           programName={detail.name}
-          slug={slug}
           onClose={() => setAddOpen(false)}
         />
       )}

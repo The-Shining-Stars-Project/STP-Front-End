@@ -26,7 +26,7 @@ type SettingsLink = { href: string; label: string; icon: LucideIcon; desc: strin
 const CONFIG_LINKS: SettingsLink[] = [
   { href: "/programs",      label: "Programs",         icon: Drama,         desc: "Create and edit programs, assign staff, and set weekly schedules." },
   { href: "/skills",        label: "Skills Framework", icon: Target,        desc: "Objective areas and the sub-skills measured across every program." },
-  { href: "/year-calendar", label: "Year Calendar",    icon: CalendarRange, desc: "Terms, holidays, and no-session days for the program year." },
+  { href: "/year-calendar", label: "Annual Planning",  icon: CalendarRange, desc: "Monthly themes, production arcs and key arts dates for the program year." },
 ];
 
 const PEOPLE_LINKS: SettingsLink[] = [

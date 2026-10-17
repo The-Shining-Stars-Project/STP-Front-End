@@ -32,7 +32,9 @@ import AddParticipantModal from "../components/AddParticipantModal";
 import ImportStarsModal from "../components/ImportStarsModal";
 import ProgramPills from "../components/ProgramPills";
 import { starDisplayName } from "@/lib/starName";
+import { programTint } from "@/lib/programColor";
 import type {
+  ParticipantDetailDto,
   ParticipantSummaryDto,
   ProgramSummaryDto,
 } from "@/lib/types/api";
@@ -66,7 +68,6 @@ type Student = {
   nm: string;
   preferred: string;
   birthYear: string;
-  prog: string;
   progId: string;
   progName: string;
   status: Status;
@@ -84,6 +85,8 @@ type Student = {
   ippExpiry: string;
   dob: string;
   allergies: string;
+  /** Dual enrolment: the star's second program, "" when none. */
+  secondaryProgId: string;
   secondaryProgName: string;
   emergencyContacts: string;
 };
@@ -157,7 +160,6 @@ function dtoToStudent(dto: ParticipantSummaryDto): Student {
     nm: dto.fullName,
     preferred: dto.preferredName ?? "",
     birthYear: dto.birthYear ? `b. ${dto.birthYear}` : "—",
-    prog: dto.programSlug,
     progId: dto.programId,
     progName: dto.programName,
     status: dto.status.toLowerCase() as Status,
@@ -175,6 +177,7 @@ function dtoToStudent(dto: ParticipantSummaryDto): Student {
     ippExpiry: dto.ippExpiry ?? "",
     dob: dto.dateOfBirth ?? "",
     allergies: dto.allergies ? `${dto.allergies}${dto.allergyAnaphylactic ? " *" : ""}` : "",
+    secondaryProgId: dto.secondaryProgramId ?? "",
     secondaryProgName: dto.secondaryProgramName ?? "",
     emergencyContacts: (dto.emergencyContacts ?? []).join("; "),
   };
@@ -216,15 +219,20 @@ function exportCsv(rows: Student[]): number {
 
 export default function StudentsPage() {
   // Cached + shared across pages via React Query (#34).
-  const { isAdmin } = useAuth();
+  const { isAdmin, canManage } = useAuth();
   const participantsQ = useParticipants();
   const programsQ = usePrograms();
   const loading = participantsQ.isPending || programsQ.isPending;
   const data = useMemo(() => (participantsQ.data ?? []).map(dtoToStudent), [participantsQ.data]);
-  const programs: ProgramSummaryDto[] = programsQ.data ?? [];
+  const programs: ProgramSummaryDto[] = useMemo(() => programsQ.data ?? [], [programsQ.data]);
+  // Program colours come from each program's colorHex — slug classes miss programs created on
+  // the Programs page (e.g. `pathways:-manteca`).
+  const colorById = useMemo(() => new Map(programs.map((p) => [p.id, p.colorHex])), [programs]);
   const [modalOpen, setModalOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [auditWarning, setAuditWarning] = useState<string | null>(null);
+  /** "Added X as Prospective — View profile", after a create from this page. */
+  const [created, setCreated] = useState<{ id: string; name: string; statusLabel: string } | null>(null);
 
   // Restored once, on mount. This page never renders on the server (AuthGuard waits for the
   // session), so reading sessionStorage in the initializer cannot mismatch a server render.
@@ -274,9 +282,10 @@ export default function StudentsPage() {
     const q = query.trim().toLowerCase();
     const rows = data.filter((d) => {
       if (statusTab !== "all" && d.status !== statusTab) return false;
-      if (programFilter !== null && d.progId !== programFilter) return false;
+      // A program pill matches stars in it as their main OR their second program.
+      if (programFilter !== null && d.progId !== programFilter && d.secondaryProgId !== programFilter) return false;
       if (alertsOnly && d.alerts.length === 0) return false;
-      if (q && !d.nm.toLowerCase().includes(q) && !d.preferred.toLowerCase().includes(q) && !d.progName.toLowerCase().includes(q) && !d.sc.toLowerCase().includes(q)) return false;
+      if (q && !d.nm.toLowerCase().includes(q) && !d.preferred.toLowerCase().includes(q) && !d.progName.toLowerCase().includes(q) && !d.secondaryProgName.toLowerCase().includes(q) && !d.sc.toLowerCase().includes(q)) return false;
       return true;
     });
     const dir = sortDir === "asc" ? 1 : -1;
@@ -327,6 +336,26 @@ export default function StudentsPage() {
   const setProg = resetPageAnd(setProgramFilter);
   const setAlerts = resetPageAnd(setAlertsOnly);
   const setSearch = resetPageAnd(setQuery);
+
+  /**
+   * After Add star: show the list the new star is actually in. The modal defaults to Prospective
+   * while this page opens on Active, so a new star seemed to vanish on close, which invites
+   * adding it again (DG's "Add star not working", Oct 2026).
+   */
+  function handleCreated(star: ParticipantDetailDto) {
+    const status = star.status.toLowerCase() as Status;
+    const known = STATUS_TABS.includes(status);
+    setStatusTab(known ? status : "all");
+    setProgramFilter(null);
+    setAlertsOnly(false);
+    setQuery("");
+    setPage(1);
+    setCreated({
+      id: star.id,
+      name: starDisplayName(star.fullName, star.preferredName),
+      statusLabel: known ? STATUS_BADGE[status].label : star.status,
+    });
+  }
 
   const exportRows = selected.size > 0 ? filtered.filter((r) => selected.has(r.id)) : filtered;
 
@@ -411,14 +440,20 @@ export default function StudentsPage() {
           <h1>Stars</h1>
         </div>
         <div className="right">
-          <button className="ss-btn ss-btn-primary" type="button" onClick={() => setModalOpen(true)}>
-            <UserPlus className="ss-btn-icon" />
-            Add star
-          </button>
-          <button className="ss-btn" type="button" onClick={() => setImportOpen(true)} title="Bulk-add stars from a CSV spreadsheet">
-            <Upload className="ss-btn-icon" />
-            Import
-          </button>
+          {/* Both POSTs need ManagementWrite. Shown to teachers, they 403'd and the modal said
+              "check that the backend is running" — so the button is hidden instead. */}
+          {canManage && (
+            <>
+              <button className="ss-btn ss-btn-primary" type="button" onClick={() => setModalOpen(true)}>
+                <UserPlus className="ss-btn-icon" />
+                Add star
+              </button>
+              <button className="ss-btn" type="button" onClick={() => setImportOpen(true)} title="Bulk-add stars from a CSV spreadsheet">
+                <Upload className="ss-btn-icon" />
+                Import
+              </button>
+            </>
+          )}
           <button
             className="ss-btn"
             type="button"
@@ -432,6 +467,31 @@ export default function StudentsPage() {
       </div>
 
       <div className="adm-content">
+        {created && (
+          <div
+            className="ss-alert"
+            role="status"
+            style={{ background: "var(--success-fill)", color: "var(--success-text)" }}
+          >
+            <CheckCircle2 />
+            <span className="ss-alert-text">
+              Added <strong>{created.name}</strong> as {created.statusLabel}
+              {" — "}
+              <Link href={`/students/${created.id}`} style={{ color: "inherit", fontWeight: 500, textDecoration: "underline" }}>
+                View profile
+              </Link>
+            </span>
+            <button
+              className="ss-alert-action"
+              type="button"
+              aria-label={`Dismiss the notice about ${created.name}`}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: "0 8px", minHeight: 34, font: "inherit", color: "inherit" }}
+              onClick={() => setCreated(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         {auditWarning && (
           <div className="ss-alert is-warning">
             <AlertTriangle />
@@ -607,6 +667,7 @@ export default function StudentsPage() {
                 ) : pageRows.map((d) => {
                   const badge = STATUS_BADGE[d.status] ?? STATUS_BADGE.active;
                   const BadgeIcon = badge.icon;
+                  const tint = programTint(colorById.get(d.progId));
                   return (
                     <tr key={d.id}>
                       <td>
@@ -619,7 +680,7 @@ export default function StudentsPage() {
                       </td>
                       <td>
                         <div className="cell-student">
-                          <span className="ss-avatar sm" style={{ background: `var(--${d.prog}-fill)`, color: `var(--${d.prog})`, border: `0.5px solid var(--${d.prog}-border)` }}>
+                          <span className="ss-avatar sm" style={{ background: tint.fill, color: tint.text, border: `0.5px solid ${tint.border}` }}>
                             {d.init}
                           </span>
                           <div>
@@ -631,10 +692,20 @@ export default function StudentsPage() {
                         </div>
                       </td>
                       <td>
-                        <span className="cell-prog">
-                          <span className={`ss-dot ${d.prog}`} />
+                        <span className="cell-prog" style={{ flexWrap: "wrap" }}>
+                          <span className="ss-dot" style={{ background: tint.accent }} aria-hidden="true" />
                           {d.progName}
-                          {d.secondaryProgName && <span className="ss-meta" style={{ color: "var(--fg-tertiary)" }}> +{d.secondaryProgName}</span>}
+                          {/* Second program: its own dot AND the words "Also in", so it never
+                              reads by colour alone. */}
+                          {d.secondaryProgName && (
+                            <span
+                              title={`Also enrolled in ${d.secondaryProgName} (second program)`}
+                              style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 8px", borderRadius: "var(--r-pill)", border: "0.5px solid var(--border)", fontSize: 11, color: "var(--fg-secondary)", whiteSpace: "nowrap" }}
+                            >
+                              <span className="ss-dot" style={{ background: programTint(colorById.get(d.secondaryProgId)).accent }} aria-hidden="true" />
+                              Also in {d.secondaryProgName}
+                            </span>
+                          )}
                         </span>
                       </td>
                       <td>
@@ -659,7 +730,7 @@ export default function StudentsPage() {
                         {d.att > 0 ? (
                           <span className="att-mini">
                             <span className="ss-progress">
-                              <span className={`ss-progress-fill ${d.prog}`} style={{ width: `${d.att}%` }} />
+                              <span className="ss-progress-fill" style={{ width: `${d.att}%`, background: tint.accent }} />
                             </span>
                             <span className="pct">{d.att}%</span>
                           </span>
@@ -738,7 +809,7 @@ export default function StudentsPage() {
 
       {importOpen && <ImportStarsModal onClose={() => setImportOpen(false)} />}
       {modalOpen && (
-        <AddParticipantModal programs={programs} onClose={() => setModalOpen(false)} />
+        <AddParticipantModal programs={programs} onClose={() => setModalOpen(false)} onCreated={handleCreated} />
       )}
     </div>
   );

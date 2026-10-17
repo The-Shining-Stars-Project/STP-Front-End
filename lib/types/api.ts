@@ -460,6 +460,10 @@ export interface CohortRollUpRowDto {
   subSkillId: Guid;
   subSkillName: string;
   sectionNumber: number;
+  /** Group rows by this, not sectionNumber: Part-time and Pathways both number sections 1–5. */
+  objectiveAreaId: Guid;
+  /** The framework the row's objective area belongs to. Rows arrive ordered by track, then area. */
+  track: ProgramTrack;
   objectiveAreaName: string;
   objectiveAreaColorHex: string;
   noviceCount: number;
@@ -538,8 +542,24 @@ export interface PerStarPlanDto {
   planId: Guid | null;
   assignedStaffId: Guid | null;
   assignedStaffName: string | null;
-  /** "Plan" when the plan names someone, "Roster" when it is the quarter's roster default. */
-  assignedStaffSource: "Plan" | "Roster" | null;
+  /**
+   * Where assignedStaffId came from: "Plan" = this month's plan names someone; "Roster" = this
+   * quarter's roster; "PreviousPlan" / "PreviousRoster" = carried over from the most recent
+   * EARLIER month's plan / quarter's roster because nothing is set for this month or quarter yet.
+   */
+  assignedStaffSource: "Plan" | "Roster" | "PreviousPlan" | "PreviousRoster" | null;
+  /**
+   * The term the assignment came from: "yyyy-MM" for Plan/PreviousPlan, "Qn yyyy" (e.g. "Q3 2026")
+   * for Roster/PreviousRoster. Null when assignedStaffSource is null.
+   */
+  assignedStaffSourceTerm: string | null;
+  /** True when this row is shown under the star's SECOND program (programId/programName are that program). */
+  isSecondaryEnrollment: boolean;
+  /**
+   * True when the star is in two programs. Their Assigned staff must be assigned to the row's
+   * program (the API refuses anyone else with a 400), so pickers filter by staff programIds.
+   */
+  isDualEnrolled: boolean;
   primaryTier: ProgressLevel;
   priorityObjectiveAreaId: Guid | null;
   priorityObjectiveAreaName: string | null;
@@ -553,6 +573,11 @@ export interface PerStarPlanDto {
 export interface UpsertPerStarPlanDto {
   participantId: Guid;
   monthKey: string;
+  /**
+   * The program the row is shown under (one of the star's enrolments). The response is labelled
+   * and its assigned-staff default resolved for this program. Omitted = primary if visible, else secondary.
+   */
+  programId?: Guid;
   assignedStaffId?: Guid | null;
   primaryTier: ProgressLevel;
   priorityObjectiveAreaId?: Guid | null;
@@ -915,6 +940,8 @@ export interface ProgramReportDto {
 }
 
 export interface StaffOnboardingReportDto {
+  /** Staff record id — key rows by this; two staff can share a name. */
+  id: Guid;
   name: string;
   pct: number;
 }
@@ -1004,6 +1031,8 @@ export interface CreateTaskDto {
   assignedToId?: Guid;
   priority?: TaskPriority;
   dueDate?: string;
+  /** Starting status: only "Upcoming" (default), "InProgress" or "Blocked" are accepted. */
+  status?: TaskStatus;
 }
 
 export interface UpdateTaskDto {
@@ -1301,6 +1330,17 @@ export interface UpsertRosterAssignmentDto {
   assignedStaffId?: Guid | null;
   countedInRatio: boolean;
   notes?: string | null;
+}
+
+/** POST /api/roster/copy-forward — fill a term from each enrolment's most recent earlier term. */
+export interface CopyRosterForwardDto {
+  year: number;
+  quarter: number;
+}
+
+export interface CopyRosterForwardResultDto {
+  /** Assignments created in the target term (enrolments that already had one are left alone). */
+  copied: number;
 }
 
 // ── Documents & Onboarding ────────────────────────────────────────────────────

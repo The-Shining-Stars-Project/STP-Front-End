@@ -15,8 +15,10 @@ import {
   KeyRound,
   Trash2,
   ShieldOff,
+  AlertTriangle,
 } from "lucide-react";
 import { authApi } from "@/lib/api/auth";
+import { describeApiError } from "@/lib/api/client";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import type {
   UserDto,
@@ -67,6 +69,214 @@ function apiErrorMessage(e: unknown, fallback: string): string {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// ── Login ↔ staff record link health ──────────────────────────────────────────
+// Oct 2026 (Scott Davis): a login linked to a former record, to a record with no programs, or
+// to a record another login also uses sees nothing, and nothing on screen said so. These feed
+// the Users table badges and the hints under both modals' "Link to staff record" select.
+
+/** Sep 17: duplicate records were renamed "Do not use duplicate …" rather than deleted. */
+const DUPLICATE_NAME = /do not use|duplicate/i;
+
+/** staffMemberId → the logins linked to that record. */
+export function loginsByStaffId(users: UserDto[]): Map<string, UserDto[]> {
+  const map = new Map<string, UserDto[]>();
+  for (const u of users) {
+    if (!u.staffMemberId) continue;
+    map.set(u.staffMemberId, [...(map.get(u.staffMemberId) ?? []), u]);
+  }
+  return map;
+}
+
+export type StaffLinkIssue = {
+  key: string;
+  label: string;
+  /** Longer explanation, for the badge tooltip and the modal hint. */
+  detail: string;
+  tone: "danger" | "warning";
+  /** True when this alone leaves the login with no stars, classes or rosters. */
+  seesNothing: boolean;
+};
+
+/**
+ * What is wrong with a login's staff link. `record` null = linked to an id the staff list
+ * doesn't have; pass it only once that list has loaded. Admin-role logins see every program
+ * whatever the link says, so nothing here makes them "see nothing".
+ */
+export function staffLinkIssues(
+  role: UserRole,
+  record: StaffSummaryDto | null,
+  otherLogins: UserDto[],
+): StaffLinkIssue[] {
+  const isAdmin = role === "Admin";
+  if (!record) {
+    return [{
+      key: "missing",
+      label: isAdmin ? "Record not found" : "Record not found — sees nothing",
+      detail: "The linked staff record no longer exists. Link this login to the person's current staff record.",
+      tone: "danger",
+      seesNothing: !isAdmin,
+    }];
+  }
+  const issues: StaffLinkIssue[] = [];
+  if (record.isFormer) {
+    issues.push({
+      key: "former",
+      label: isAdmin ? "Former record" : "Former — sees nothing",
+      detail: isAdmin
+        ? "The linked staff record is marked former. Admin access is unaffected, but the link is out of date."
+        : "The linked staff record is marked former, so this login sees no stars, classes or rosters. Link it to the active record, or restore this one under Onboarding → Former.",
+      tone: isAdmin ? "warning" : "danger",
+      seesNothing: !isAdmin,
+    });
+  } else if (record.programIds.length === 0 && !isAdmin) {
+    issues.push({
+      key: "noprograms",
+      label: "No programs — sees nothing",
+      detail: "The linked staff record isn't assigned to any program, so this login sees no stars, classes or rosters. Assign programs under Onboarding → Edit details, or Programs → Manage staff.",
+      tone: "danger",
+      seesNothing: true,
+    });
+  }
+  if (otherLogins.length > 0) {
+    const emails = otherLogins.map((u) => u.email).join(", ");
+    issues.push({
+      key: "shared",
+      label: `Also linked to ${emails}`,
+      detail: `${emails} uses the same staff record. One staff record should back one login, and new shared links are refused.`,
+      tone: "warning",
+      seesNothing: false,
+    });
+  }
+  if (DUPLICATE_NAME.test(record.fullName)) {
+    issues.push({
+      key: "duplicate",
+      label: "Possible duplicate",
+      detail: `"${record.fullName}" looks like a leftover duplicate. Link this login to the record that holds the person's programs.`,
+      tone: "warning",
+      seesNothing: false,
+    });
+  }
+  return issues;
+}
+
+/** Badge for one issue; the text carries the meaning, the colour only reinforces it. */
+export function StaffLinkBadge({ issue }: { issue: StaffLinkIssue }) {
+  return (
+    <span
+      className={`ss-badge ${issue.tone === "danger" ? "is-attention" : "is-prospective"}`}
+      title={issue.detail}
+      style={{ whiteSpace: "normal" }}
+    >
+      <AlertTriangle style={{ flexShrink: 0 }} />{issue.label}
+    </span>
+  );
+}
+
+/** Dropdown text: tells records apart and says which ones another login already uses. */
+function staffLinkOptionLabel(m: StaffSummaryDto, otherLogins: UserDto[], isCurrent: boolean): string {
+  // staffOptionLabel already ends in "Former since <month>" for a former record.
+  let label = staffOptionLabel(m);
+  if (otherLogins.length > 0) label += ` — linked to ${otherLogins.map((u) => u.email).join(", ")}`;
+  if (isCurrent) label += " (current link)";
+  return label;
+}
+
+const hintLineStyle: React.CSSProperties = { fontSize: 12, marginTop: 6, display: "flex", alignItems: "flex-start", gap: 6, lineHeight: 1.45 };
+
+/**
+ * Where the staff list stands. Only `loaded` (the query succeeded) lets us call a linked id
+ * "not found": while it is pending, or after it failed, an id the list lacks is unknown — the
+ * same rule as the Users table badges. Saying "missing" then could get a valid link cleared.
+ */
+export type StaffListState = { loaded: boolean; error: unknown; onRetry: () => void };
+
+/** Shown in place of any link verdict until the staff list has loaded. */
+function StaffListStatusLine({ state }: { state: StaffListState }) {
+  if (!state.error) {
+    return (
+      <div style={{ ...hintLineStyle, color: "var(--fg-tertiary)" }}>
+        <Loader2 style={{ width: 13, height: 13, flexShrink: 0, marginTop: 2, animation: "spin 1s linear infinite" }} />
+        <span>Loading staff records…</span>
+      </div>
+    );
+  }
+  return (
+    <div role="alert" style={{ ...hintLineStyle, color: "var(--danger)", alignItems: "center", flexWrap: "wrap" }}>
+      <AlertCircle style={{ width: 13, height: 13, flexShrink: 0 }} />
+      <span style={{ flex: 1, minWidth: 0 }}>
+        Couldn&apos;t load staff records. {describeApiError(state.error, "Check your connection and try again.")}
+      </span>
+      <button type="button" className="ss-btn" onClick={state.onRetry}>Retry</button>
+    </div>
+  );
+}
+
+/**
+ * Under the select: the chosen record's programs, then anything that will stop the login seeing
+ * its stars. `isChange` = the admin picked a different record than the saved one, which is when
+ * the server refuses a record another login already uses.
+ */
+function StaffLinkPreview({
+  staffMemberId,
+  record,
+  role,
+  otherLogins,
+  isChange,
+  staffList,
+}: {
+  staffMemberId: string;
+  record: StaffSummaryDto | null;
+  role: UserRole;
+  otherLogins: UserDto[];
+  isChange: boolean;
+  staffList: StaffListState;
+}) {
+  const listStatus = !staffList.loaded && !record ? <StaffListStatusLine state={staffList} /> : null;
+  if (!staffMemberId) {
+    if (role === "Admin") return listStatus;
+    return (
+      <>
+        {listStatus}
+        <div style={{ ...hintLineStyle, color: "var(--warning-text, var(--warning))" }}>
+          <AlertTriangle style={{ width: 13, height: 13, flexShrink: 0, marginTop: 2 }} />
+          <span>Not linked: this login will see no stars, classes or rosters.</span>
+        </div>
+      </>
+    );
+  }
+  // An id the list lacks is only "not found" once the list has loaded.
+  if (listStatus) return listStatus;
+  const issues = staffLinkIssues(role, record, otherLogins).map((i) =>
+    i.key === "shared" && isChange
+      ? { ...i, detail: `Already linked to ${otherLogins.map((u) => u.email).join(", ")}. One staff record backs one login, so saving will be refused until that login is unlinked.`, tone: "danger" as const }
+      : i
+  );
+  return (
+    <div aria-live="polite">
+      {record && (
+        <div style={{ ...hintLineStyle, color: "var(--fg-secondary)" }}>
+          <span>
+            <span style={{ fontWeight: 500 }}>Programs:</span>{" "}
+            {record.programNames.length > 0 ? record.programNames.join(", ") : "none"}
+          </span>
+        </div>
+      )}
+      {issues.map((i) => (
+        <div key={i.key}
+          style={{ ...hintLineStyle, color: i.tone === "danger" ? "var(--danger)" : "var(--warning-text, var(--warning))" }}>
+          <AlertTriangle style={{ width: 13, height: 13, flexShrink: 0, marginTop: 2 }} />
+          <span>{i.detail}</span>
+        </div>
+      ))}
+      {issues.length === 0 && role !== "Admin" && (
+        <div style={{ ...hintLineStyle, color: "var(--fg-tertiary)" }}>
+          Stars, classes and rosters this login sees come from the programs this staff record is assigned to (Onboarding → open the person → Edit details, or Programs page → Manage staff).
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Create User Modal ───────────────────────────────────────────────────────────
 
 type CreateForm = {
@@ -82,10 +292,15 @@ const MIN_PASSWORD = 8;
 
 export function CreateUserModal({
   staff,
+  staffList,
+  users,
   onClose,
   onCreated,
 }: {
   staff: StaffSummaryDto[];
+  staffList: StaffListState;
+  /** Existing logins, to mark staff records another login already uses. */
+  users: UserDto[];
   onClose: () => void;
   onCreated: (u: UserDto) => void;
 }) {
@@ -121,18 +336,17 @@ export function CreateUserModal({
       const created = await authApi.register(dto);
       onCreated(created);
     } catch (e) {
-      // Do NOT infer the cause from the status code. RegisterAsync rejects a bad password
-      // and a taken address, and both used to arrive as 409 — so a password that was one
-      // character short told the admin to change the email, which was never the problem.
-      setError(
-        apiErrorMessage(
-          e,
-          "Could not create the account — make sure the backend is running and you are signed in as an admin."
-        )
-      );
+      // Do NOT infer the cause from the status code. RegisterAsync rejects a bad password,
+      // a taken address and (Oct 2026) a former / missing / already-linked staff record, each
+      // with its own detail — a password one character short once told the admin to change
+      // the email, which was never the problem.
+      setError(describeApiError(e, "Could not create the account — try again."));
       setSaving(false);
     }
   }
+
+  const linkedLogins = loginsByStaffId(users);
+  const selectedRecord = staff.find((s) => s.id === form.staffMemberId) ?? null;
 
   return (
     <div
@@ -211,19 +425,30 @@ export function CreateUserModal({
             </div>
           </div>
 
-          {staff.length > 0 && (
+          {/* Shown while the staff list loads or after it failed too, so a missing list reads as
+              "loading" / "couldn't load" rather than the field silently not being there. */}
+          {(staff.length > 0 || !staffList.loaded) && (
             <div>
               <label className="ss-label" htmlFor="cu-staff" style={{ display: "block", marginBottom: 6 }}>
                 Link to staff record <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span>
               </label>
               <select id="cu-staff" value={form.staffMemberId}
                 onChange={(e) => setForm(f => ({ ...f, staffMemberId: e.target.value }))}
+                disabled={staff.length === 0}
                 style={{ ...inputStyle, appearance: "auto" }}>
                 <option value="">Not linked</option>
                 {staff.filter((s) => !s.isFormer || s.id === form.staffMemberId).map((s) => (
-                  <option key={s.id} value={s.id}>{staffOptionLabel(s)}</option>
+                  <option key={s.id} value={s.id}>{staffLinkOptionLabel(s, linkedLogins.get(s.id) ?? [], false)}</option>
                 ))}
               </select>
+              <StaffLinkPreview
+                staffMemberId={form.staffMemberId}
+                record={selectedRecord}
+                role={form.role}
+                otherLogins={form.staffMemberId ? linkedLogins.get(form.staffMemberId) ?? [] : []}
+                isChange
+                staffList={staffList}
+              />
             </div>
           )}
         </div>
@@ -252,12 +477,17 @@ export function CreateUserModal({
 export function EditUserModal({
   target,
   staff,
+  staffList,
+  users,
   isSelf,
   onClose,
   onSaved,
 }: {
   target: UserDto;
   staff: StaffSummaryDto[];
+  staffList: StaffListState;
+  /** Every login, to mark staff records another login already uses. */
+  users: UserDto[];
   isSelf: boolean;
   onClose: () => void;
   onSaved: (u: UserDto) => void;
@@ -292,10 +522,20 @@ export function EditUserModal({
       const updated = await authApi.update(target.id, dto);
       onSaved(updated);
     } catch (e) {
-      setError(apiErrorMessage(e, "Could not save changes — try again."));
+      // The server's own reason: last admin, taken email, or (Oct 2026) a staff record that is
+      // former, missing or already linked to another login.
+      setError(describeApiError(e, "Could not save changes — try again."));
       setSaving(false);
     }
   }
+
+  // Other logins only: this login's own current link isn't a conflict.
+  const linkedLogins = loginsByStaffId(users.filter((u) => u.id !== target.id));
+  const currentLinkId = target.staffMemberId ?? "";
+  const selectedRecord = staff.find((m) => m.id === staffMemberId) ?? null;
+  // The saved link is always offered, even when that record is former, so the select never
+  // reads "Not linked" while a link exists (it did — the cause of the Scott Davis confusion).
+  const staffOptions = staff.filter((m) => !m.isFormer || m.id === currentLinkId || m.id === staffMemberId);
 
   return (
     <div style={overlayStyle}>
@@ -314,18 +554,35 @@ export function EditUserModal({
           {role === "Staff" && (
             <div>
               <label className="ss-label" htmlFor="eu-staff" style={{ display: "block", marginBottom: 6 }}>Link to staff record</label>
+              {/* With no list to pick from (still loading, or it failed) the only other choice is
+                  "Not linked", which would clear a link that may be fine: wait for the list. */}
               <select id="eu-staff" value={staffMemberId} onChange={(e) => setStaffMemberId(e.target.value)}
+                disabled={staff.length === 0 && !staffList.loaded}
                 style={{ width: "100%", boxSizing: "border-box", border: "0.5px solid var(--border-hover)", borderRadius: "var(--r-md)", padding: "8px 12px", fontSize: 13, color: "var(--fg)", background: "var(--surface)", outline: "none", appearance: "auto" }}>
                 <option value="">Not linked</option>
-                {staff.filter((m) => !m.isFormer).map((m) => (
-                  <option key={m.id} value={m.id}>{staffOptionLabel(m)}</option>
+                {staffOptions.map((m) => (
+                  <option key={m.id} value={m.id}>{staffLinkOptionLabel(m, linkedLogins.get(m.id) ?? [], m.id === currentLinkId)}</option>
                 ))}
+                {/* Linked to an id the list doesn't have: say so rather than show "Not linked" — but
+                    only call it "not found" once the list has loaded. */}
+                {staffMemberId && !selectedRecord && (
+                  <option value={staffMemberId}>
+                    {staffList.loaded
+                      ? "Linked record not found in the staff list"
+                      : staffList.error
+                        ? "Linked (couldn't load the staff list)"
+                        : "Loading staff records…"}
+                  </option>
+                )}
               </select>
-              <div style={{ fontSize: 12, color: staffMemberId ? "var(--fg-tertiary)" : "var(--warning-text, var(--warning))", marginTop: 6 }}>
-                {staffMemberId
-                  ? "Stars, classes and rosters this login sees come from the programs this staff record is assigned to (Onboarding → open the person → Edit details, or Programs page → Manage staff)."
-                  : "Not linked: this login will see no stars, classes or rosters."}
-              </div>
+              <StaffLinkPreview
+                staffMemberId={staffMemberId}
+                record={selectedRecord}
+                role={role}
+                otherLogins={staffMemberId ? linkedLogins.get(staffMemberId) ?? [] : []}
+                isChange={staffDirty}
+                staffList={staffList}
+              />
             </div>
           )}
           <div>

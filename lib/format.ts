@@ -59,3 +59,12 @@ export function timestampLabel(s: string): string {
 export function localMonthKey(d: Date = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
+
+/**
+ * "yyyy-MM-dd" for the viewer's LOCAL day. Use this for "today" comparisons against API dates
+ * (which are yyyy-MM-dd org dates); `toISOString().slice(0, 10)` is the UTC day and flips to
+ * tomorrow after ~5 pm Pacific (Oct 2026: today's events vanished from the dashboard).
+ */
+export function localDateKey(d: Date = new Date()): string {
+  return `${localMonthKey(d)}-${String(d.getDate()).padStart(2, "0")}`;
+}

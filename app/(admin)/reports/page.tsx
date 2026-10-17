@@ -58,6 +58,7 @@ export default function ReportsPage() {
   const staffItems = useMemo(
     () =>
       (report?.staffOnboarding ?? []).map((s) => ({
+        id: s.id,
         nm: s.name,
         pct: s.pct,
         fill: s.pct === 100 ? "success" : s.pct >= 50 ? "warning" : "danger",
@@ -407,7 +408,8 @@ export default function ReportsPage() {
           ) : staffItems.length ? (
             <>
               <div style={{ padding: "6px 16px 2px", fontSize: 12, color: "var(--fg-tertiary)" }}>
-                {report?.totals.fullyOnboardedStaff ?? 0} of {report?.totals.staff ?? 0} fully onboarded
+                {/* The API counts current staff only; former staff (with an end date) are left out. */}
+                {report?.totals.fullyOnboardedStaff ?? 0} of {report?.totals.staff ?? 0} current staff fully onboarded
               </div>
               <StaffList items={staffItems} />
             </>

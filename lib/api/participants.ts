@@ -22,6 +22,17 @@ export const participantsApi = {
   /** Notes only — the one edit a teacher may make on a star. */
   updateIntakeNotes: (id: string, dto: UpdateIntakeNotesDto) => api.put<ParticipantDetailDto>(`/api/participants/${id}/intake-notes`, dto),
 
+  // ── Enrolment ───────────────────────────────────────────────────────────────
+  // Two named wrappers over update, so a caller can't mix them up: "Enroll star" used to send
+  // { programId } for a star who was already in another program, which MOVED them and silently
+  // dropped e.g. Pathways (Oct 2026). Adding a second program leaves the main one alone.
+  /** Dual enrolment: sets `programId` as the star's second program. Their main program is unchanged. */
+  addSecondProgram: (id: string, programId: string) =>
+    api.put<ParticipantDetailDto>(`/api/participants/${id}`, { secondaryProgramId: programId } satisfies UpdateParticipantDto),
+  /** Changes the star's MAIN program — they leave the old one. A second program, if any, is unchanged. */
+  moveMainProgram: (id: string, programId: string) =>
+    api.put<ParticipantDetailDto>(`/api/participants/${id}`, { programId } satisfies UpdateParticipantDto),
+
   getArtsProfile:    (id: string)                       => api.get<ParticipantArtsProfileDto>(`/api/participants/${id}/arts-profile`),
   upsertArtsProfile: (id: string, dto: UpsertArtsProfileDto) => api.put<ParticipantArtsProfileDto>(`/api/participants/${id}/arts-profile`, dto),
 
