@@ -66,8 +66,10 @@ route protection lives in `proxy.ts`, not `middleware.ts`.
 
 - Star documents and staff onboarding are **Admin-only**. Hide the widgets for everyone else.
 - Delete is soft delete for stars and volunteers.
-- Attendance: teachers mark Present/Absent and can submit. Only managers see Rescheduled /
-  Not scheduled and can reopen a session.
+- Attendance: teachers mark Present/Absent, can submit, and can reopen a session within 7 days
+  of the class (API setting `Attendance:TeacherReopenDays`; it 403s with the reason after that,
+  so show the message, don't hide the button). Managers reopen any time. Only managers see
+  Rescheduled / Not scheduled.
 - A teacher only sees their programs' stars. An empty screen for a teacher usually means an
   unlinked staff record, not a bug.
 - Dual-enrolled stars show under both programs (match `programId` OR `secondaryProgramId`).

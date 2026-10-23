@@ -8,7 +8,7 @@ export type ParticipantStatus = "Active" | "Prospective" | "Attention" | "Former
 export type StaffRole = "Teacher" | "TeacherAssistant" | "Coordinator" | "TechnologySystemsCoordinator" | "Admin";
 /** Rescheduled / NotScheduled count as marked but are left out of attendance rates; management-only to set. */
 export type AttendanceStatus = "Present" | "Absent" | "Unmarked" | "Rescheduled" | "NotScheduled";
-export type TaskStatus = "Upcoming" | "InProgress" | "Done" | "Overdue" | "Blocked";
+export type TaskStatus = "Upcoming" | "InProgress" | "Done" | "Overdue" | "Blocked" | "Draft";
 export type TaskPriority = "High" | "Medium" | "Low";
 export type ScriptType = "Musical" | "Play" | "Scene" | "Skit";
 export type ScriptStatus = "Active" | "Draft" | "Archived";
@@ -1042,6 +1042,17 @@ export interface UpdateTaskDto {
   taskStatus?: TaskStatus;
   priority?: TaskPriority;
   dueDate?: string | null;
+  /** Omitted/null fields are left alone server-side, so clearing needs these flags. */
+  clearAssignee?: boolean;
+  clearDueDate?: boolean;
+}
+export interface UpdateProjectDto {
+  title?: string;
+  type?: ProjectType;
+  status?: string;
+  scope?: string;
+  dueDate?: string;
+  clearDueDate?: boolean;
 }
 
 // ── Scripts ───────────────────────────────────────────────────────────────────

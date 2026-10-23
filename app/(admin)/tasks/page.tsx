@@ -14,6 +14,7 @@ import {
   Calendar,
   ChevronDown,
   Check,
+  Pencil,
   type LucideIcon,
 } from "lucide-react";
 import { tasksApi } from "@/lib/api/tasks";
@@ -79,7 +80,11 @@ const TASK_STATUS_MAP: Record<string, TaskStatus> = {
   Done:       "done",
   Overdue:    "overdue",
   Blocked:    "blocked",
+  Draft:      "draft",
 };
+
+/** Open (default) hides finished work — tasks marked Done and projects marked done. */
+type StatusView = "open" | "done" | "all";
 
 const PRIO_MAP: Record<string, Prio> = {
   High:   "high",
@@ -93,12 +98,20 @@ const PRIO_API_MAP: Record<Prio, string> = {
   low:  "Low",
 };
 
-// The starting statuses the API accepts on create (anything else is a 400).
+// Form chip → API value. On create only Upcoming / InProgress / Blocked / Draft are accepted
+// (anything else is a 400); Done is reachable through edit.
 const STATUS_API_MAP: Record<AddTaskForm["status"], ApiTaskStatus> = {
   upcoming:   "Upcoming",
   inprogress: "InProgress",
   blocked:    "Blocked",
+  draft:      "Draft",
+  done:       "Done",
 };
+
+/** Task status → the edit form's chip. Overdue is derived, so it edits as Upcoming. */
+function formStatusOf(status: TaskStatus): AddTaskForm["status"] {
+  return status === "overdue" ? "upcoming" : status;
+}
 
 /** Assignee filter values besides a staff id. */
 const ALL_ASSIGNEES = "all";
@@ -115,6 +128,7 @@ function dtoToTask(dto: ProjectTaskDto, staffList: StaffSummaryDto[]): Task {
   const arole = staff ? staffRoleAvatarClass(staff.role) : "admin";
   return {
     id: dto.id,
+    projectId: dto.projectId,
     name: dto.name,
     ctx: dto.context ?? undefined,
     assignedToId: dto.assignedToId,
@@ -122,6 +136,7 @@ function dtoToTask(dto: ProjectTaskDto, staffList: StaffSummaryDto[]): Task {
     ar: arole,
     an: dto.assignedToName ?? "Unassigned",
     due: formatDueDate(dto.dueDate),
+    dueIso: dto.dueDate,
     status: TASK_STATUS_MAP[dto.taskStatus] ?? "upcoming",
     overdue: dto.isOverdue,
     prio: PRIO_MAP[dto.priority] ?? "med",
@@ -144,13 +159,16 @@ function dtoToProject(dto: ProjectDto, staffList: StaffSummaryDto[]): Project {
     iconcls: TYPE_CLS[dto.type] ?? "amber",
     title: dto.title,
     type: [dto.type.toLowerCase(), dto.type],
+    typeRaw: dto.type,
     status: [dto.status, STATUS_LABEL[dto.status] ?? dto.status],
     scope: dto.scope ?? "All programs",
+    scopeRaw: dto.scope ?? "",
     frac: `${done} / ${tasks.length} done`,
     pct: tasks.length > 0 ? Math.round((done / tasks.length) * 100) : 0,
     barcls: TYPE_BARCLS[dto.type] ?? "",
     alert: alertParts.join(" · "),
     due: formatDueDate(dto.dueDate),
+    dueIso: dto.dueDate,
     tasks,
   };
 }
@@ -186,7 +204,11 @@ export default function TasksPage() {
   const [projForm, setProjForm] = useState<NewProjectForm>(EMPTY_PROJECT_FORM);
   const [projSaving, setProjSaving] = useState(false);
   const [projError, setProjError] = useState<string | null>(null);
+  // Shared by both modals: only one can be open at a time.
+  const [deleting, setDeleting] = useState(false);
   const [view, setView] = useState<"project" | "my" | "all">("project");
+  // Open by default so finished tasks disappear (client, Oct 2026).
+  const [statusView, setStatusView] = useState<StatusView>("open");
   const [typeFilter, setTypeFilter] = useState<"all" | "production" | "staff" | "admin" | "event">("all");
   // ALL_ASSIGNEES, UNASSIGNED, or a staff id.
   const [assigneeFilter, setAssigneeFilter] = useState<string>(ALL_ASSIGNEES);
@@ -204,6 +226,20 @@ export default function TasksPage() {
     if (assigneeFilter === ALL_ASSIGNEES) return true;
     if (assigneeFilter === UNASSIGNED) return t.assignedToId === null;
     return t.assignedToId === assigneeFilter;
+  }
+
+  // The optimistic Done override counts, so a just-checked task leaves the Open view at once.
+  function isTaskDone(t: Task): boolean { return doneTasks[t.id] ?? t.status === "done"; }
+  function matchesStatusView(t: Task): boolean {
+    if (statusView === "all") return true;
+    return statusView === "done" ? isTaskDone(t) : !isTaskDone(t);
+  }
+  // A finished project drops out of Open with its tasks; Done shows it (or any project with
+  // finished tasks to look back on).
+  function projectMatchesStatusView(p: Project): boolean {
+    if (statusView === "all") return true;
+    const projectDone = p.status[0] === "done";
+    return statusView === "done" ? projectDone || p.tasks.some(isTaskDone) : !projectDone;
   }
 
   // derived stats
@@ -257,12 +293,76 @@ export default function TasksPage() {
     setTaskError(null);
     setModalOpen(true);
   }
-  function closeModal() { setModalOpen(false); }
+  function closeModal() { if (!deleting) setModalOpen(false); }
+
+  // Clicking a task row (Oct 2026). The project is shown but not changeable: moving a task
+  // between projects isn't something the API supports yet.
+  function openEdit(t: Task) {
+    const projectIdx = projects.findIndex((p) => p.id === t.projectId);
+    setForm({
+      editingId: t.id,
+      name: t.name,
+      ctx: t.ctx ?? "",
+      projectIdx: projectIdx >= 0 ? projectIdx : null,
+      projectLocked: true,
+      assigneeId: t.assignedToId ?? "",
+      due: t.dueIso ?? "",
+      prio: t.prio,
+      status: formStatusOf(t.status),
+    });
+    setTaskError(null);
+    setModalOpen(true);
+  }
+
+  async function handleDeleteTask() {
+    if (!form.editingId || deleting) return;
+    setDeleting(true);
+    setTaskError(null);
+    try {
+      await tasksApi.deleteTask(form.editingId);
+      setModalOpen(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+    } catch (e) {
+      setTaskError(describeApiError(e, "Couldn't delete the task — try again."));
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   function openProjModal() {
     setProjForm(EMPTY_PROJECT_FORM);
     setProjError(null);
     setProjModalOpen(true);
+  }
+
+  function openEditProject(p: Project) {
+    const status = p.status[0];
+    setProjForm({
+      editingId: p.id,
+      title: p.title,
+      type: p.typeRaw,
+      // Statuses the chips don't know (legacy "blocked") edit as Planning rather than vanish.
+      status: status === "inprogress" || status === "done" ? status : "planning",
+      scope: p.scopeRaw,
+      due: p.dueIso ?? "",
+    });
+    setProjError(null);
+    setProjModalOpen(true);
+  }
+
+  async function handleDeleteProject() {
+    if (!projForm.editingId || deleting) return;
+    setDeleting(true);
+    setProjError(null);
+    try {
+      await tasksApi.deleteProject(projForm.editingId);
+      setProjModalOpen(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+    } catch (e) {
+      setProjError(describeApiError(e, "Couldn't delete the project — try again."));
+    } finally {
+      setDeleting(false);
+    }
   }
 
   // Both modals stay open until the save resolves: closing first lost what was typed whenever
@@ -272,17 +372,29 @@ export default function TasksPage() {
     setProjSaving(true);
     setProjError(null);
     try {
-      await tasksApi.createProject({
-        title: projForm.title.trim(),
-        type: projForm.type,
-        status: projForm.status,
-        scope: projForm.scope.trim() || undefined,
-        dueDate: projForm.due || undefined,
-      });
+      if (projForm.editingId) {
+        await tasksApi.updateProject(projForm.editingId, {
+          title: projForm.title.trim(),
+          type: projForm.type,
+          status: projForm.status,
+          // "" clears the scope server-side; a missing due date needs the explicit flag.
+          scope: projForm.scope.trim(),
+          dueDate: projForm.due || undefined,
+          clearDueDate: !projForm.due,
+        });
+      } else {
+        await tasksApi.createProject({
+          title: projForm.title.trim(),
+          type: projForm.type,
+          status: projForm.status,
+          scope: projForm.scope.trim() || undefined,
+          dueDate: projForm.due || undefined,
+        });
+      }
       setProjModalOpen(false);
       queryClient.invalidateQueries({ queryKey: queryKeys.projects });
     } catch (e) {
-      setProjError(describeApiError(e, "Couldn't create the project — try again."));
+      setProjError(describeApiError(e, projForm.editingId ? "Couldn't save the project — try again." : "Couldn't create the project — try again."));
     } finally {
       setProjSaving(false);
     }
@@ -295,16 +407,29 @@ export default function TasksPage() {
     setTaskSaving(true);
     setTaskError(null);
     try {
-      await tasksApi.addTask(proj.id, {
-        projectId: proj.id,
-        name: form.name.trim(),
-        context: form.ctx.trim() || undefined,
-        assignedToId: form.assigneeId || undefined,
-        priority: PRIO_API_MAP[form.prio] as "High" | "Medium" | "Low",
-        dueDate: form.due || undefined,
-        status: STATUS_API_MAP[form.status],
-      });
-      setCollapsedMap((prev) => ({ ...prev, [proj.id]: false }));
+      if (form.editingId) {
+        await tasksApi.updateTask(form.editingId, {
+          name: form.name.trim(),
+          context: form.ctx.trim(),
+          assignedToId: form.assigneeId || undefined,
+          clearAssignee: !form.assigneeId,
+          priority: PRIO_API_MAP[form.prio] as "High" | "Medium" | "Low",
+          dueDate: form.due || undefined,
+          clearDueDate: !form.due,
+          taskStatus: STATUS_API_MAP[form.status],
+        });
+      } else {
+        await tasksApi.addTask(proj.id, {
+          projectId: proj.id,
+          name: form.name.trim(),
+          context: form.ctx.trim() || undefined,
+          assignedToId: form.assigneeId || undefined,
+          priority: PRIO_API_MAP[form.prio] as "High" | "Medium" | "Low",
+          dueDate: form.due || undefined,
+          status: STATUS_API_MAP[form.status],
+        });
+        setCollapsedMap((prev) => ({ ...prev, [proj.id]: false }));
+      }
       closeModal();
       queryClient.invalidateQueries({ queryKey: queryKeys.projects });
     } catch (e) {
@@ -313,6 +438,18 @@ export default function TasksPage() {
     } finally {
       setTaskSaving(false);
     }
+  }
+
+  // Shared by both task tables: the whole row opens the editor, the checkbox still toggles Done.
+  function rowProps(t: Task) {
+    return {
+      className: `task-row-editable${isTaskDone(t) ? " task-row-done" : ""}`,
+      tabIndex: 0,
+      role: "button" as const,
+      title: "Open to edit",
+      onClick: () => openEdit(t),
+      onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openEdit(t); } },
+    };
   }
 
   return (
@@ -370,6 +507,13 @@ export default function TasksPage() {
               ))}
             </select>
           </label>
+          <span style={{ width: 1, height: 22, background: "var(--border-strong)", margin: "0 4px" }} />
+          {/* Open / Done / All (client, Oct 2026): finished tasks and projects leave the default view. */}
+          <div className="seg" role="group" aria-label="Show">
+            {([["open", "Open"], ["done", "Done"], ["all", "All"]] as [StatusView, string][]).map(([val, label]) => (
+              <button key={val} type="button" className={statusView === val ? "is-active" : ""} onClick={() => setStatusView(val)}>{label}</button>
+            ))}
+          </div>
           <span style={{ width: 1, height: 22, background: "var(--border-strong)", margin: "0 4px" }} />
           <span
             className="ss-chip"
@@ -433,6 +577,7 @@ export default function TasksPage() {
               if (view === "my" && t.assignedToId !== myStaffId) return false;
               if (typeFilter !== "all" && p.type[0] !== typeFilter) return false;
               if (!matchesAssignee(t)) return false;
+              if (!matchesStatusView(t)) return false;
               if (overdueOnly && !(t.overdue || t.status === "overdue")) return false;
               return true;
             });
@@ -440,6 +585,7 @@ export default function TasksPage() {
           if (flat.length === 0) return (
             <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>
               {view === "my" ? "No tasks assigned to you match the current filters." : "No tasks match the current filters."}
+              {statusView === "open" && " Finished tasks are under Done."}
             </div>
           );
 
@@ -448,12 +594,14 @@ export default function TasksPage() {
               <table className="tbl">
                 <tbody>
                   {flat.map(({ p, t }) => {
-                    const isDone = doneTasks[t.id] ?? t.status === "done";
+                    const isDone = isTaskDone(t);
                     const Tag = TAG[t.status].icon;
                     return (
-                      <tr key={t.id} className={isDone ? "task-row-done" : ""}>
+                      <tr key={t.id} {...rowProps(t)}>
                         <td style={{ width: 34 }}>
-                          <span className={`ss-checkbox${isDone ? " is-checked" : ""}`} onClick={(e) => { e.stopPropagation(); toggleTask(t); }}>
+                          <span className={`ss-checkbox${isDone ? " is-checked" : ""}`} role="checkbox" aria-checked={isDone} aria-label="Done" tabIndex={0}
+                            onClick={(e) => { e.stopPropagation(); toggleTask(t); }}
+                            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); toggleTask(t); } }}>
                             <Check />
                           </span>
                         </td>
@@ -493,6 +641,7 @@ export default function TasksPage() {
             .map((p, idx) => ({ p, idx }))
             .filter(({ p }) => {
               if (typeFilter !== "all" && p.type[0] !== typeFilter) return false;
+              if (!projectMatchesStatusView(p)) return false;
               if (assigneeFilter !== ALL_ASSIGNEES && !p.tasks.some(matchesAssignee)) return false;
               if (overdueOnly && !p.tasks.some((t) => t.overdue || t.status === "overdue")) return false;
               return true;
@@ -500,14 +649,16 @@ export default function TasksPage() {
 
           if (filteredItems.length === 0) return (
             <div style={{ padding: "40px 0", textAlign: "center", color: "var(--fg-tertiary)", fontSize: 13 }}>
-              No projects match the current filters.
+              No projects match the current filters.{statusView === "open" && " Finished projects are under Done."}
             </div>
           );
 
           return filteredItems.map(({ p, idx }) => {
           const ProjIcon = p.icon;
           // A person (or Unassigned) filter narrows the rows too, not just which projects show.
-          const rows = p.tasks.filter(matchesAssignee);
+          // Under Open, a project's finished tasks are hidden with it; a done project under Done
+          // shows everything it had.
+          const rows = p.tasks.filter((t) => matchesAssignee(t) && (statusView === "done" && p.status[0] === "done" ? true : matchesStatusView(t)));
           return (
             <div className={`proj${isCollapsed(p.id) ? " is-collapsed" : ""}`} key={p.id}>
               <div className="proj-head" onClick={() => toggleProject(p.id)}>
@@ -518,6 +669,13 @@ export default function TasksPage() {
                     <span className="proj-title">{p.title}</span>
                     <span className={`tbadge ${p.type[0]}`}>{p.type[1]}</span>
                     <span className={`sbadge ${p.status[0]}`}>{p.status[1]}</span>
+                    {canManage && (
+                      <button type="button" className="ss-btn" aria-label={`Edit project ${p.title}`} title="Edit project"
+                        style={{ minHeight: 34, padding: "0 8px" }}
+                        onClick={(e) => { e.stopPropagation(); openEditProject(p); }}>
+                        <Pencil className="ss-btn-icon" />
+                      </button>
+                    )}
                   </div>
                   <div className="proj-sub">
                     <span>{p.scope}</span>
@@ -539,12 +697,14 @@ export default function TasksPage() {
                   <table className="tbl">
                     <tbody>
                       {rows.map((t) => {
-                        const isDone = doneTasks[t.id] ?? t.status === "done";
+                        const isDone = isTaskDone(t);
                         const Tag = TAG[t.status].icon;
                         return (
-                          <tr key={t.id} className={isDone ? "task-row-done" : ""}>
+                          <tr key={t.id} {...rowProps(t)}>
                             <td style={{ width: 34 }}>
-                              <span className={`ss-checkbox${isDone ? " is-checked" : ""}`} onClick={(e) => { e.stopPropagation(); toggleTask(t); }}>
+                              <span className={`ss-checkbox${isDone ? " is-checked" : ""}`} role="checkbox" aria-checked={isDone} aria-label="Done" tabIndex={0}
+                                onClick={(e) => { e.stopPropagation(); toggleTask(t); }}
+                                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); toggleTask(t); } }}>
                                 <Check />
                               </span>
                             </td>
@@ -599,11 +759,14 @@ export default function TasksPage() {
           projectsError={projectsQ.isError ? projectsQ.error : null}
           onRetryProjects={() => { void projectsQ.refetch(); }}
           staffList={staffList}
-          saving={taskSaving} error={taskError} onClose={closeModal} onSubmit={handleSubmit} />
+          saving={taskSaving} error={taskError} onClose={closeModal} onSubmit={handleSubmit}
+          onDelete={canManage ? handleDeleteTask : undefined} deleting={deleting} />
       )}
       {projModalOpen && canManage && (
         <NewProjectModal form={projForm} setForm={setProjForm}
-          saving={projSaving} error={projError} onClose={() => setProjModalOpen(false)} onSubmit={handleProjectSubmit} />
+          saving={projSaving} error={projError} onClose={() => { if (!deleting) setProjModalOpen(false); }} onSubmit={handleProjectSubmit}
+          onDelete={handleDeleteProject} deleting={deleting}
+          taskCount={projects.find((p) => p.id === projForm.editingId)?.tasks.length ?? 0} />
       )}
     </div>
   );

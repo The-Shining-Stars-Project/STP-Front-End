@@ -220,11 +220,12 @@ export default function AttendancePage() {
     }
   }
 
-  // Any assigned teacher can submit; only a coordinator or admin can reopen, so confirm first.
+  // Any assigned teacher can submit, and can reopen within 7 days (client, Oct 2026); after
+  // that a coordinator or admin has to.
   async function submit() {
     if (!selected) return;
     if (!window.confirm(
-      `Submit attendance for ${selected.programName}, ${prettyDate(date)}? Marks lock after submitting; a coordinator can reopen it.`
+      `Submit attendance for ${selected.programName}, ${prettyDate(date)}? Marks lock after submitting. You can reopen it within 7 days; after that, ask a coordinator.`
     )) return;
     setSubmitting(true);
     try {
@@ -238,9 +239,9 @@ export default function AttendancePage() {
     }
   }
 
-  // Management only (ManagementWrite + program scope). Every unlock is audited server-side
-  // (attendance.session.reopen), and every mark that follows is audited as usual — attendance
-  // drives funding.
+  // Managers any time; assigned teachers within Attendance:TeacherReopenDays (7) of the class.
+  // Every unlock is audited server-side (attendance.session.reopen), and every mark that
+  // follows is audited as usual — attendance drives funding.
   async function reopen() {
     if (!selected) return;
     if (!window.confirm("Reopen this session for edits? The change is recorded in the audit log.")) return;
@@ -250,10 +251,12 @@ export default function AttendancePage() {
       setSelected((s) => (s ? { ...s, status: "open", submittedAt: null } : s));
       setError(null);
     } catch (e) {
-      // Coordinators are program-scoped: one not assigned to this program gets a bare 403.
+      // A 403 with a message is the teacher window ("more than 7 days old — ask a coordinator")
+      // and describeApiError shows it as-is. A bare 403 is program scope: the caller isn't
+      // assigned to this program.
       setError(
         e instanceof ApiError && e.status === 403 && !e.detail
-          ? "Only an admin, or a coordinator assigned to this program, can reopen this session."
+          ? "Only staff assigned to this program can reopen this session."
           : describeApiError(e, "Couldn't reopen the session. Try again.")
       );
     } finally {

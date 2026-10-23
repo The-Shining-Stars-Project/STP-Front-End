@@ -351,6 +351,7 @@ button.chk { cursor: pointer; }
 .sbadge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; }
 .sbadge.inprogress { background: var(--info-fill); color: var(--info-text); } .sbadge.inprogress::before { background: var(--info); }
 .sbadge.planning { background: var(--warning-fill); color: var(--warning-text); } .sbadge.planning::before { background: var(--warning); }
+.sbadge.done { background: var(--success-fill); color: var(--success-text); } .sbadge.done::before { background: var(--success); }
 
 /* task table (project body) */
 .proj-body table.tbl { min-width: 0; }
@@ -367,6 +368,11 @@ button.chk { cursor: pointer; }
 .tag.overdue { background: var(--danger-fill); color: var(--danger-text); }
 .tag.blocked { background: var(--danger-fill); color: var(--danger-text); }
 .tag.upcoming { background: var(--neutral-fill); color: var(--neutral-text); }
+/* Draft: open but not yet real work — dashed so it reads as provisional, not just another grey. */
+.tag.draft { background: transparent; color: var(--fg-secondary); border: 1px dashed var(--border-strong); }
+.task-row-editable { cursor: pointer; }
+.task-row-editable:hover td, .task-row-editable:focus-visible td { background: var(--bg-secondary); }
+.task-row-editable:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .prio { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .prio.high { background: var(--danger); } .prio.med { background: var(--warning); } .prio.low { background: var(--neutral); }
 .td-due.overdue { color: var(--danger); font-weight: var(--w-medium); }

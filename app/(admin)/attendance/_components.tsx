@@ -328,7 +328,7 @@ export function RosterView({
   locked: boolean;
   total: number; present: number; absent: number; marked: number;
   rescheduled?: number; notScheduled?: number;
-  /** Shows the Rescheduled / Not scheduled buttons and Reopen (coordinators and admins). */
+  /** Shows the Rescheduled / Not scheduled buttons (coordinators and admins). */
   canManage?: boolean;
   filter: Filter; setFilter: (f: Filter) => void;
   query: string; setQuery: (q: string) => void;
@@ -576,16 +576,27 @@ export function RosterView({
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                 <Check style={{ width: 14, height: 14 }} />Attendance submitted
               </span>
-              {canManage && onReopen && (
-                <button className="ss-btn" type="button" disabled={submitting} onClick={onReopen} title="Unlock this session to correct attendance (recorded in the audit log)">
+              {/* Everyone sees Reopen (client, Oct 2026): teachers may use it for 7 days after the
+                  class, managers any time. Past the window the API answers 403 with the reason,
+                  which the page shows — hiding the button would just look like "it vanished". */}
+              {onReopen && (
+                <button
+                  className="ss-btn"
+                  type="button"
+                  disabled={submitting}
+                  onClick={onReopen}
+                  title={canManage
+                    ? "Unlock this session to correct attendance (recorded in the audit log)"
+                    : "Unlock this session to correct attendance — within 7 days of the class (recorded in the audit log)"}
+                >
                   {submitting ? <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} /> : <Unlock className="ss-btn-icon" />}
                   Reopen for edits
                 </button>
               )}
             </span>
           ) : (
-            // Any assigned teacher can submit (client, Sep 24). Reopen stays management-only, so the
-            // page asks for confirmation before submitting (Oct 2026): a teacher can't undo it.
+            // Any assigned teacher can submit (client, Sep 24) and can reopen for 7 days (Oct 2026),
+            // so the confirmation is a nudge rather than a point of no return.
             <button
               className="ss-btn ss-btn-primary"
               disabled={total === 0 || marked < total || submitting}

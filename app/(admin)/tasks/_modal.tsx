@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   Plus,
   AlertCircle,
@@ -7,6 +8,8 @@ import {
   Loader,
   Lock,
   Circle,
+  PenLine,
+  Trash2,
   X,
   FolderPlus,
   Drama,
@@ -24,7 +27,7 @@ import { useDialogFocus } from "@/lib/useDialogFocus";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type TaskStatus = "done" | "inprogress" | "overdue" | "blocked" | "upcoming";
+export type TaskStatus = "done" | "inprogress" | "overdue" | "blocked" | "upcoming" | "draft";
 export type Prio = "high" | "med" | "low";
 
 export const TAG: Record<TaskStatus, { icon: LucideIcon; label: string }> = {
@@ -33,10 +36,12 @@ export const TAG: Record<TaskStatus, { icon: LucideIcon; label: string }> = {
   overdue:    { icon: AlertCircle,  label: "Overdue" },
   blocked:    { icon: Lock,         label: "Blocked" },
   upcoming:   { icon: Circle,       label: "Upcoming" },
+  draft:      { icon: PenLine,      label: "Draft" },
 };
 
 export type Task = {
   id: string;
+  projectId: string;
   name: string;
   ctx?: string;
   assignedToId: string | null;
@@ -44,6 +49,8 @@ export type Task = {
   ar: string;
   an: string;
   due: string;
+  /** The raw yyyy-mm-dd, for prefilling the edit form. */
+  dueIso: string | null;
   status: TaskStatus;
   overdue?: boolean;
   prio: Prio;
@@ -56,19 +63,24 @@ export type Project = {
   iconcls: string;
   title: string;
   type: [string, string];
+  typeRaw: ProjectType;
   status: [string, string];
   scope: string;
+  scopeRaw: string;
   frac: string;
   pct: number;
   barcls: string;
   alert: string;
   due: string;
+  dueIso: string | null;
   tasks: Task[];
 };
 
-// ── Add Task Modal ────────────────────────────────────────────────────────────
+// ── Add / Edit Task Modal ─────────────────────────────────────────────────────
 
 export type AddTaskForm = {
+  /** Set when the modal edits an existing task; null when adding. */
+  editingId: string | null;
   name: string;
   ctx: string;
   projectIdx: number | null;
@@ -77,20 +89,55 @@ export type AddTaskForm = {
   assigneeId: string;
   due: string;
   prio: Prio;
-  status: "upcoming" | "inprogress" | "blocked";
+  status: "upcoming" | "inprogress" | "blocked" | "draft" | "done";
 };
 
 export const EMPTY_TASK_FORM: AddTaskForm = {
-  name: "", ctx: "", projectIdx: null, projectLocked: false, assigneeId: "", due: "", prio: "med", status: "upcoming",
+  editingId: null, name: "", ctx: "", projectIdx: null, projectLocked: false, assigneeId: "", due: "", prio: "med", status: "upcoming",
 };
 
 /** Shown by the Project field and on the disabled button while no project is chosen. */
 const CHOOSE_PROJECT_HINT = "Choose a project to enable Add task";
 
+/** Starting statuses a new task may have; editing also allows Done. */
+const NEW_TASK_STATUSES: [AddTaskForm["status"], string][] = [
+  ["upcoming", "Upcoming"], ["inprogress", "In progress"], ["blocked", "Blocked"], ["draft", "Draft"],
+];
+const EDIT_TASK_STATUSES: [AddTaskForm["status"], string][] = [...NEW_TASK_STATUSES, ["done", "Done"]];
+
+/**
+ * Two-step delete that lives inside a modal footer: the first click turns into a question,
+ * the second confirms. Avoids window.confirm (which blocks the escape key handling) while
+ * still giving a "button happy" team a moment to stop.
+ */
+function DeleteInFooter({ what, onDelete, deleting, disabled }: { what: string; onDelete: () => void; deleting: boolean; disabled: boolean }) {
+  const [confirming, setConfirming] = useState(false);
+  if (!confirming) {
+    return (
+      <button type="button" className="ss-btn" onClick={() => setConfirming(true)} disabled={disabled} style={{ marginRight: "auto", color: "var(--danger)" }}>
+        <Trash2 className="ss-btn-icon" />Delete
+      </button>
+    );
+  }
+  return (
+    <span style={{ marginRight: "auto", display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--fg-secondary)" }}>
+      <span>Delete {what}? This can&apos;t be undone.</span>
+      <button type="button" className="ss-btn" onClick={() => setConfirming(false)} disabled={deleting}>Keep</button>
+      <button type="button" className="ss-btn" onClick={onDelete} disabled={deleting} style={{ color: "var(--danger)", borderColor: "var(--danger-border)" }}>
+        {deleting ? <Loader className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} aria-hidden="true" /> : <Trash2 className="ss-btn-icon" />}
+        {deleting ? "Deleting…" : "Yes, delete"}
+      </button>
+    </span>
+  );
+}
+
 /**
  * The modal stays open until the save resolves (the page closes it on success), so a failed
  * save keeps what was typed and shows the error here. Debbie's Oct 13 "Add task does nothing"
  * was the required Project left unchosen behind a disabled button that looked enabled.
+ *
+ * Oct 2026: the same modal edits an existing task (form.editingId set). Delete is offered only
+ * when the page says the user may (DELETE is ManagementWrite).
  */
 export function AddTaskModal({
   form,
@@ -104,10 +151,15 @@ export function AddTaskModal({
   error,
   onClose,
   onSubmit,
+  onDelete,
+  deleting = false,
 }: {
   form: AddTaskForm;
   setForm: React.Dispatch<React.SetStateAction<AddTaskForm>>;
   projects: Project[];
+  /** Present only when the user may delete this task; shown in edit mode. */
+  onDelete?: () => void;
+  deleting?: boolean;
   /**
    * The projects query's state. New task can be clicked before the list arrives or after it
    * failed, and an empty list then is not "no projects yet" (a teacher would ask a coordinator
@@ -122,12 +174,13 @@ export function AddTaskModal({
   onClose: () => void;
   onSubmit: () => void;
 }) {
+  const editing = form.editingId !== null;
   const hasName = form.name.trim().length > 0;
   const hasProject = form.projectIdx !== null;
-  const canSubmit = hasName && hasProject && !saving;
+  const canSubmit = hasName && hasProject && !saving && !deleting;
   const targetProject = form.projectIdx !== null ? projects[form.projectIdx] : null;
   // Closing mid-save would drop the error if the save then failed.
-  useEscapeKey(onClose, !saving);
+  useEscapeKey(onClose, !saving && !deleting);
   const panelRef = useDialogFocus<HTMLDivElement>();
   // A project picked from the dropdown keeps the dropdown, so the choice can still be changed.
   const lockedProject = form.projectLocked ? targetProject : null;
@@ -151,13 +204,15 @@ export function AddTaskModal({
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "var(--space-4)" }}
     >
-      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Add task" style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(500px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label={editing ? "Edit task" : "Add task"} style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(500px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
           <div>
             <h3 style={{ fontSize: 15, fontWeight: 500, margin: "0 0 2px" }}>
-              {targetProject ? `Add task to ${targetProject.title}` : "Add task"}
+              {editing ? "Edit task" : targetProject ? `Add task to ${targetProject.title}` : "Add task"}
             </h3>
-            <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>Task will appear in the project list</div>
+            <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>
+              {editing ? (targetProject ? `In ${targetProject.title}` : "Changes save when you click Save") : "Task will appear in the project list"}
+            </div>
           </div>
           <button type="button" onClick={onClose} disabled={saving} aria-label="Close" style={{ background: "none", border: "none", cursor: saving ? "not-allowed" : "pointer", color: "var(--fg-tertiary)", padding: 4, borderRadius: "var(--r-sm)" }}>
             <X style={{ width: 16, height: 16 }} />
@@ -250,8 +305,8 @@ export function AddTaskModal({
             </div>
             <div>
               <div className="ss-label" style={{ marginBottom: 8 }}>Status</div>
-              <div style={{ display: "flex", gap: 5 }}>
-                {([["upcoming", "Upcoming"], ["inprogress", "In progress"], ["blocked", "Blocked"]] as [AddTaskForm["status"], string][]).map(([s, label]) => (
+              <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                {(editing ? EDIT_TASK_STATUSES : NEW_TASK_STATUSES).map(([s, label]) => (
                   <button key={s} type="button" className={`ss-chip${form.status === s ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, status: s }))}>
                     {label}
                   </button>
@@ -267,13 +322,14 @@ export function AddTaskModal({
           </div>
         )}
 
-        <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end", flexShrink: 0 }}>
-          <button className="ss-btn" type="button" onClick={onClose} disabled={saving}>Cancel</button>
+        <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap", flexShrink: 0 }}>
+          {editing && onDelete && <DeleteInFooter what="this task" onDelete={onDelete} deleting={deleting} disabled={saving} />}
+          <button className="ss-btn" type="button" onClick={onClose} disabled={saving || deleting}>Cancel</button>
           <button className="ss-btn ss-btn-primary" type="button" onClick={onSubmit} disabled={!canSubmit} title={disabledReason}>
             {saving
               ? <Loader className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} aria-hidden="true" />
-              : <Plus className="ss-btn-icon" />}
-            {saving ? "Adding…" : "Add task"}
+              : editing ? <Check className="ss-btn-icon" /> : <Plus className="ss-btn-icon" />}
+            {saving ? (editing ? "Saving…" : "Adding…") : editing ? "Save changes" : "Add task"}
           </button>
         </div>
       </div>
@@ -284,16 +340,22 @@ export function AddTaskModal({
 // ── New Project Modal ─────────────────────────────────────────────────────────
 
 export type NewProjectForm = {
+  /** Set when editing an existing project; null when creating. */
+  editingId: string | null;
   title: string;
   type: ProjectType;
-  status: "planning" | "inprogress";
+  status: "planning" | "inprogress" | "done";
   scope: string;
   due: string;
 };
 
 export const EMPTY_PROJECT_FORM: NewProjectForm = {
-  title: "", type: "Production", status: "planning", scope: "", due: "",
+  editingId: null, title: "", type: "Production", status: "planning", scope: "", due: "",
 };
+
+const PROJECT_STATUSES: [NewProjectForm["status"], string][] = [
+  ["planning", "Planning"], ["inprogress", "In progress"], ["done", "Done"],
+];
 
 const PROJECT_TYPES: { value: ProjectType; label: string; icon: LucideIcon }[] = [
   { value: "Production", label: "Production", icon: Drama },
@@ -302,7 +364,10 @@ const PROJECT_TYPES: { value: ProjectType; label: string; icon: LucideIcon }[] =
   { value: "Event",      label: "Event",      icon: Calendar },
 ];
 
-/** Same open-until-saved contract as AddTaskModal. Only shown to managers (POST is ManagementWrite). */
+/**
+ * Same open-until-saved contract as AddTaskModal. Only shown to managers (POST, PUT and
+ * DELETE are all ManagementWrite). Edits an existing project when form.editingId is set.
+ */
 export function NewProjectModal({
   form,
   setForm,
@@ -310,6 +375,9 @@ export function NewProjectModal({
   error,
   onClose,
   onSubmit,
+  onDelete,
+  deleting = false,
+  taskCount = 0,
 }: {
   form: NewProjectForm;
   setForm: React.Dispatch<React.SetStateAction<NewProjectForm>>;
@@ -317,10 +385,15 @@ export function NewProjectModal({
   error: string | null;
   onClose: () => void;
   onSubmit: () => void;
+  onDelete?: () => void;
+  deleting?: boolean;
+  /** How many tasks the delete would take with it (edit mode). */
+  taskCount?: number;
 }) {
+  const editing = form.editingId !== null;
   const hasTitle = form.title.trim().length > 0;
-  const canSubmit = hasTitle && !saving;
-  useEscapeKey(onClose, !saving);
+  const canSubmit = hasTitle && !saving && !deleting;
+  useEscapeKey(onClose, !saving && !deleting);
   const panelRef = useDialogFocus<HTMLDivElement>();
 
   const inputStyle: React.CSSProperties = {
@@ -334,11 +407,13 @@ export function NewProjectModal({
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(43,42,38,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "var(--space-4)" }}
     >
-      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="New project" style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(500px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label={editing ? "Edit project" : "New project"} style={{ background: "var(--surface)", borderRadius: "var(--r-lg)", width: "min(500px, 100%)", display: "flex", flexDirection: "column", border: "0.5px solid var(--border-hover)", maxHeight: "90vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "var(--space-4)", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
           <div>
-            <h3 style={{ fontSize: 15, fontWeight: 500, margin: "0 0 2px" }}>New project</h3>
-            <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>Group related tasks under one initiative</div>
+            <h3 style={{ fontSize: 15, fontWeight: 500, margin: "0 0 2px" }}>{editing ? "Edit project" : "New project"}</h3>
+            <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>
+              {editing ? "Mark it Done to move it out of the Open view" : "Group related tasks under one initiative"}
+            </div>
           </div>
           <button type="button" onClick={onClose} disabled={saving} aria-label="Close" style={{ background: "none", border: "none", cursor: saving ? "not-allowed" : "pointer", color: "var(--fg-tertiary)", padding: 4, borderRadius: "var(--r-sm)" }}>
             <X style={{ width: 16, height: 16 }} />
@@ -364,8 +439,8 @@ export function NewProjectModal({
 
           <div>
             <div className="ss-label" style={{ marginBottom: 8 }}>Status</div>
-            <div style={{ display: "flex", gap: 5 }}>
-              {([["planning", "Planning"], ["inprogress", "In progress"]] as [NewProjectForm["status"], string][]).map(([s, label]) => (
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              {PROJECT_STATUSES.map(([s, label]) => (
                 <button key={s} type="button" className={`ss-chip${form.status === s ? " is-active" : ""}`} style={{ cursor: "pointer" }} onClick={() => setForm((f) => ({ ...f, status: s }))}>
                   {label}
                 </button>
@@ -390,14 +465,20 @@ export function NewProjectModal({
           </div>
         )}
 
-        <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end", flexShrink: 0 }}>
-          <button className="ss-btn" type="button" onClick={onClose} disabled={saving}>Cancel</button>
+        <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap", flexShrink: 0 }}>
+          {editing && onDelete && (
+            <DeleteInFooter
+              what={taskCount > 0 ? `this project and its ${taskCount} task${taskCount === 1 ? "" : "s"}` : "this project"}
+              onDelete={onDelete} deleting={deleting} disabled={saving}
+            />
+          )}
+          <button className="ss-btn" type="button" onClick={onClose} disabled={saving || deleting}>Cancel</button>
           <button className="ss-btn ss-btn-primary" type="button" onClick={onSubmit} disabled={!canSubmit}
-            title={!hasTitle && !saving ? "Enter a project title to enable Create project" : undefined}>
+            title={!hasTitle && !saving ? `Enter a project title to enable ${editing ? "Save" : "Create project"}` : undefined}>
             {saving
               ? <Loader className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} aria-hidden="true" />
-              : <FolderPlus className="ss-btn-icon" />}
-            {saving ? "Creating…" : "Create project"}
+              : editing ? <Check className="ss-btn-icon" /> : <FolderPlus className="ss-btn-icon" />}
+            {saving ? (editing ? "Saving…" : "Creating…") : editing ? "Save changes" : "Create project"}
           </button>
         </div>
       </div>
