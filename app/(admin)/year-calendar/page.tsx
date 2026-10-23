@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CalendarRange, CalendarDays, Pencil, X, Check } from "lucide-react";
+import Link from "next/link";
+import { CalendarRange, CalendarDays, Pencil, X, Check, ListChecks, Plus } from "lucide-react";
 import { yearCalendarApi } from "@/lib/api/yearCalendar";
 import { describeApiError } from "@/lib/api/client";
+import { useProjects } from "@/lib/api/hooks";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import type { YearCalendarDto, KeyArtsDateDto, CalendarThemeDto, UpsertCalendarThemeDto, ThemeArc } from "@/lib/types/api";
+import { localDateKey, parseLocalDate } from "@/lib/format";
+import type { YearCalendarDto, KeyArtsDateDto, CalendarThemeDto, UpsertCalendarThemeDto, ThemeArc, ProjectTaskDto } from "@/lib/types/api";
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
@@ -44,6 +47,29 @@ export default function YearCalendarPage() {
     data?.themes.forEach((t) => m.set(t.month, t));
     return m;
   }, [data]);
+
+  // Tasks linked to Annual Planning (Oct 2026): each card lists the open tasks due in that month
+  // of the planning year ahead — this year for months still to come, next year for months already
+  // past — and "+ Task" opens the Tasks page with that month's 1st as the due date.
+  const projectsQ = useProjects();
+  const todayKey = localDateKey();
+  const todayMonth = Number(todayKey.slice(5, 7));
+  const todayYear = Number(todayKey.slice(0, 4));
+  const planningYearOf = (month: number) => (month >= todayMonth ? todayYear : todayYear + 1);
+  const tasksByMonth = useMemo(() => {
+    const m = new Map<number, (ProjectTaskDto & { projectTitle: string })[]>();
+    for (const p of projectsQ.data ?? [])
+      for (const t of p.tasks) {
+        if (!t.dueDate || t.taskStatus === "Done") continue;
+        const month = Number(t.dueDate.slice(5, 7));
+        if (Number(t.dueDate.slice(0, 4)) !== planningYearOf(month)) continue;
+        (m.get(month) ?? m.set(month, []).get(month)!).push({ ...t, projectTitle: p.title });
+      }
+    for (const list of m.values()) list.sort((a, b) => a.dueDate!.localeCompare(b.dueDate!));
+    return m;
+    // planningYearOf is derived from todayKey, which is in the deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectsQ.data, todayKey]);
 
   function onThemeSaved(saved: CalendarThemeDto) {
     setData((prev) => prev ? { ...prev, themes: [...prev.themes.filter((t) => t.month !== saved.month), saved].sort((a, b) => a.month - b.month) } : prev);
@@ -126,6 +152,30 @@ export default function YearCalendarPage() {
                         <div style={{ fontSize: "var(--fs-meta)", color: "var(--fg-secondary)", lineHeight: "var(--lh-body)" }}>{t.featuredGamesText}</div>
                       </div>
                     )}
+
+                    {(() => {
+                      const year = planningYearOf(month);
+                      const tasks = tasksByMonth.get(month) ?? [];
+                      return (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          <div className="ss-label" style={{ color: "var(--fg-tertiary)", display: "flex", alignItems: "center", gap: 6 }}>
+                            <ListChecks style={{ width: 12, height: 12 }} aria-hidden="true" />Tasks due · {name} {year}
+                          </div>
+                          {tasks.length === 0 ? (
+                            <div style={{ fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)" }}>{projectsQ.isPending ? "Loading…" : "None open"}</div>
+                          ) : tasks.map((task) => (
+                            <Link key={task.id} href={`/tasks?edit=${task.id}`} title={`${task.projectTitle}${task.assignedToName ? ` · ${task.assignedToName}` : ""} — open in Tasks`}
+                              style={{ display: "flex", alignItems: "baseline", gap: 6, fontSize: "var(--fs-meta)", color: task.isOverdue ? "var(--danger-text)" : "var(--fg-secondary)", textDecoration: "none" }}>
+                              <span style={{ color: "var(--fg-tertiary)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{parseLocalDate(task.dueDate!).getDate()}</span>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.name}</span>
+                            </Link>
+                          ))}
+                          <Link href={`/tasks?add=${year}-${String(month).padStart(2, "0")}-01`} className="ss-btn" style={{ alignSelf: "flex-start", textDecoration: "none", marginTop: 2 }} title={`New task due in ${name} ${year}`}>
+                            <Plus className="ss-btn-icon" />Task for {name}
+                          </Link>
+                        </div>
+                      );
+                    })()}
 
                     {t?.programmingNotes && (
                       <div style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)", lineHeight: "var(--lh-body)", borderTop: "0.5px solid var(--border)", paddingTop: "var(--space-2)" }}>

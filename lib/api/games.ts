@@ -25,4 +25,6 @@ export const gamesApi = {
   getById: (id: string)                 => api.get<GameDetailDto>(`/api/games/${id}`),
   create:  (dto: CreateGameDto)         => api.post<GameDetailDto>("/api/games", dto),
   update:  (id: string, dto: UpdateGameDto) => api.put<GameDetailDto>(`/api/games/${id}`, dto),
+  /** Permanent. ManagementWrite. The API refuses (409) to delete the last game in the library. */
+  delete:  (id: string)                 => api.delete<void>(`/api/games/${id}`),
 };

@@ -284,6 +284,13 @@ button.chk { cursor: pointer; }
 .evt.manteca { background: var(--manteca-fill); color: var(--manteca-text); }
 .evt.staff { background: var(--staff-fill); color: var(--staff-text); }
 .evt.milestone { background: var(--productions-fill); color: var(--productions-text); border: 1.5px solid var(--productions-border); border-radius: var(--r-sm); font-weight: var(--w-medium); }
+/* Calendar layers (Oct 2026): tasks due that day, and Annual Planning key arts dates. Shapes differ
+   from event chips (dashed / outlined) so the kind is never told by colour alone. */
+.evt.task { background: transparent; color: var(--fg-secondary); border: 1px dashed var(--border-strong); }
+.evt.task.is-overdue { color: var(--danger-text); border-color: var(--danger-border); }
+.evt.keydate { background: var(--bg-tertiary); color: var(--fg-secondary); border-left: 3px solid var(--fg-tertiary); border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+.cal-theme-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 12px; margin-bottom: var(--space-3); border: var(--bw) solid var(--border); border-radius: var(--r-md); background: var(--bg-secondary); font-size: var(--fs-meta); color: var(--fg-secondary); }
+.cal-theme-banner .theme { font-weight: var(--w-medium); color: var(--fg); }
 .evt .more { color: var(--fg-secondary); }
 .cal-cell .more-link { font-size: var(--fs-label); color: var(--fg-secondary); padding-left: 4px; }
 

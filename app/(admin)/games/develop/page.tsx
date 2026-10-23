@@ -1,11 +1,26 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { Lightbulb, Plus, ArrowUpRight, Check, Wand2, AlertTriangle } from "lucide-react";
+import Link from "next/link";
+import { Lightbulb, Plus, ArrowUpRight, ArrowDownLeft, Check, Wand2, AlertTriangle, Link2, Pencil, Trash2 } from "lucide-react";
 import { gameBacklogApi } from "@/lib/api/gameBacklog";
+import { gamesApi } from "@/lib/api/games";
 import { describeApiError } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import type { GameIdeaDto, AgeModificationDto, GameCategory } from "@/lib/types/api";
+import type { GameIdeaDto, AgeModificationDto, GameCategory, GameSummaryDto } from "@/lib/types/api";
+
+/** The Log / Edit modification form. `editingId` is set when editing an existing entry. */
+type ModForm = {
+  open: boolean;
+  editingId: string | null;
+  gameName: string;
+  ageLevel: string;
+  modification: string;
+  teacher: boolean;
+  /** Library game this modifies, or "" for one that isn't in the library. */
+  gameId: string;
+};
+const CLOSED_MOD_FORM: ModForm = { open: false, editingId: null, gameName: "", ageLevel: "", modification: "", teacher: false, gameId: "" };
 
 const CATEGORIES: GameCategory[] = ["Warmup", "Circle", "Movement", "Name", "Icebreaker", "Theater", "Reset", "SuggestedAddition"];
 
@@ -36,21 +51,33 @@ export default function ToDevelopPage() {
 
   const [ideaForm, setIdeaForm] = useState<{ open: boolean; name: string; category: GameCategory | ""; source: string; notes: string; teacher: boolean }>(
     { open: false, name: "", category: "", source: "", notes: "", teacher: false });
-  const [modForm, setModForm] = useState<{ open: boolean; gameName: string; ageLevel: string; modification: string; teacher: boolean }>(
-    { open: false, gameName: "", ageLevel: "", modification: "", teacher: false });
+  const [modForm, setModForm] = useState<ModForm>(CLOSED_MOD_FORM);
+  // The library, for the "modifies which activity" picker and the linked-game chips.
+  const [games, setGames] = useState<GameSummaryDto[]>([]);
   const [promoting, setPromoting] = useState<string | null>(null);
   const [savingIdea, setSavingIdea] = useState(false);
   const [savingMod, setSavingMod] = useState(false);
+  const [deletingMod, setDeletingMod] = useState(false);
+  const [confirmDeleteMod, setConfirmDeleteMod] = useState(false);
   const [ideaError, setIdeaError] = useState<string | null>(null);
   const [modError, setModError] = useState<string | null>(null);
   const [promoteError, setPromoteError] = useState<{ id: string; message: string } | null>(null);
 
   useEffect(() => {
-    Promise.all([gameBacklogApi.getIdeas(), gameBacklogApi.getAgeMods()])
-      .then(([i, m]) => { setIdeas(i); setMods(m); setLoadError(null); })
+    Promise.all([gameBacklogApi.getIdeas(), gameBacklogApi.getAgeMods(), gamesApi.list()])
+      .then(([i, m, g]) => {
+        setIdeas(i); setMods(m); setGames(g); setLoadError(null);
+        // "+ Log modification" on a game's drawer lands here as ?game=<id> with the form open
+        // and that activity picked. Read once the library is here so the chip can show its name.
+        const wanted = new URLSearchParams(window.location.search).get("game");
+        const game = wanted ? g.find((x) => x.id === wanted) : undefined;
+        if (game) setModForm({ ...CLOSED_MOD_FORM, open: true, gameId: game.id, gameName: game.name });
+      })
       .catch((e: unknown) => setLoadError(describeApiError(e, "Check your connection and try again.")))
       .finally(() => setLoading(false));
   }, [reloadKey]);
+
+  const gameNameById = (id: string | null) => (id ? games.find((g) => g.id === id)?.name ?? null : null);
 
   function retryLoad() {
     setLoading(true);
@@ -81,23 +108,63 @@ export default function ToDevelopPage() {
     }
   }
 
-  async function addMod() {
+  function closeModForm() { setModForm(CLOSED_MOD_FORM); setModError(null); setConfirmDeleteMod(false); }
+
+  function openEditMod(m: AgeModificationDto) {
+    setModForm({ open: true, editingId: m.id, gameName: m.gameName, ageLevel: m.groupAgeLevel, modification: m.modification, teacher: m.teacherSuggested, gameId: m.gameId ?? "" });
+    setModError(null);
+    setConfirmDeleteMod(false);
+  }
+
+  // Picking a library game fills the name; clearing it keeps whatever was typed.
+  function pickGame(id: string) {
+    const game = games.find((g) => g.id === id);
+    setModForm((f) => ({ ...f, gameId: id, gameName: game ? game.name : f.gameName }));
+  }
+
+  async function saveMod() {
     if (!modForm.gameName.trim() || !modForm.modification.trim() || savingMod) return;
     setSavingMod(true);
     setModError(null);
     try {
-      const created = await gameBacklogApi.createAgeMod({
-        gameName: modForm.gameName.trim(),
-        groupAgeLevel: modForm.ageLevel.trim(),
-        modification: modForm.modification.trim(),
-        teacherSuggested: modForm.teacher,
-      });
-      setMods((p) => [created, ...p]);
-      setModForm({ open: false, gameName: "", ageLevel: "", modification: "", teacher: false });
+      if (modForm.editingId) {
+        const updated = await gameBacklogApi.updateAgeMod(modForm.editingId, {
+          gameName: modForm.gameName.trim(),
+          groupAgeLevel: modForm.ageLevel.trim(),
+          modification: modForm.modification.trim(),
+          gameId: modForm.gameId || null,
+        });
+        setMods((p) => p.map((m) => (m.id === updated.id ? updated : m)));
+      } else {
+        const created = await gameBacklogApi.createAgeMod({
+          gameName: modForm.gameName.trim(),
+          groupAgeLevel: modForm.ageLevel.trim(),
+          modification: modForm.modification.trim(),
+          teacherSuggested: modForm.teacher,
+          gameId: modForm.gameId || null,
+        });
+        setMods((p) => [created, ...p]);
+      }
+      closeModForm();
     } catch (e) {
-      setModError(describeApiError(e, "Couldn't log the modification. Your text is still here; try again."));
+      setModError(describeApiError(e, modForm.editingId ? "Couldn't save the modification. Your text is still here; try again." : "Couldn't log the modification. Your text is still here; try again."));
     } finally {
       setSavingMod(false);
+    }
+  }
+
+  async function deleteMod() {
+    if (!modForm.editingId || deletingMod) return;
+    setDeletingMod(true);
+    setModError(null);
+    try {
+      await gameBacklogApi.deleteAgeMod(modForm.editingId);
+      setMods((p) => p.filter((m) => m.id !== modForm.editingId));
+      closeModForm();
+    } catch (e) {
+      setModError(describeApiError(e, "Couldn't delete the modification. Try again."));
+    } finally {
+      setDeletingMod(false);
     }
   }
 
@@ -107,8 +174,28 @@ export default function ToDevelopPage() {
     try {
       const updated = await gameBacklogApi.promote(id);
       setIdeas((p) => p.map((i) => (i.id === id ? updated : i)));
+      // The new draft game should be pickable for modifications straight away.
+      gamesApi.list().then(setGames).catch(() => { /* chips just won't name it until reload */ });
     } catch (e) {
       setPromoteError({ id, message: describeApiError(e, "Couldn't promote this idea. Try again.") });
+    } finally {
+      setPromoting(null);
+    }
+  }
+
+  // Reverses a promote: the draft game is deleted from the library (client, Oct 2026).
+  async function demote(id: string) {
+    const idea = ideas.find((i) => i.id === id);
+    if (!idea || !window.confirm(`Move "${idea.name}" back to To Develop? The activity it created is removed from Curriculum Resources; any modifications logged against it are kept.`)) return;
+    setPromoting(id);
+    setPromoteError(null);
+    try {
+      const updated = await gameBacklogApi.demote(id);
+      setIdeas((p) => p.map((i) => (i.id === id ? updated : i)));
+      setGames((g) => g.filter((x) => x.id !== idea.promotedGameId));
+      setMods((p) => p.map((m) => (m.gameId === idea.promotedGameId ? { ...m, gameId: null } : m)));
+    } catch (e) {
+      setPromoteError({ id, message: describeApiError(e, "Couldn't move this idea back. Try again.") });
     } finally {
       setPromoting(null);
     }
@@ -190,7 +277,14 @@ export default function ToDevelopPage() {
                   )}
                 </div>
                 {i.promotedGameId ? (
-                  <span className="ss-badge is-active" style={{ flexShrink: 0 }}><Check />In library</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                    <span className="ss-badge is-active"><Check />In library</span>
+                    {canManage && (
+                      <button type="button" className="ss-btn" onClick={() => demote(i.id)} disabled={promoting === i.id} title="Remove the activity from Curriculum Resources and bring the idea back here">
+                        <ArrowDownLeft className="ss-btn-icon" />{promoting === i.id ? "Moving…" : "Move back"}
+                      </button>
+                    )}
+                  </span>
                 ) : canManage ? (
                   <button type="button" className="ss-btn" onClick={() => promote(i.id)} disabled={promoting === i.id} style={{ flexShrink: 0 }}>
                     <ArrowUpRight className="ss-btn-icon" />{promoting === i.id ? "Promoting…" : "Promote"}
@@ -209,26 +303,48 @@ export default function ToDevelopPage() {
           <div className="widget-head" style={{ display: "flex", alignItems: "center" }}>
             <Wand2 className="ico" style={{ color: "var(--primary)" }} />
             <h3>Modifications</h3>
-            <button type="button" className="ss-btn" style={{ marginLeft: "auto" }} onClick={() => { setModForm((f) => ({ ...f, open: !f.open })); setModError(null); }}>
+            <button type="button" className="ss-btn" style={{ marginLeft: "auto" }} onClick={() => (modForm.open && !modForm.editingId ? closeModForm() : (closeModForm(), setModForm({ ...CLOSED_MOD_FORM, open: true })))}>
               <Plus className="ss-btn-icon" />Log modification
             </button>
           </div>
           <div className="widget-body" style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
             {modForm.open && (
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", padding: "var(--space-3)", background: "var(--bg-tertiary)", borderRadius: "var(--r-md)" }}>
+                {modForm.editingId && <div className="ss-label" style={{ color: "var(--fg-tertiary)" }}>Editing modification</div>}
+                {/* Attach to a library activity (Oct 2026). Optional: a game that isn't in the library yet is still a free-text name. */}
+                <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--fg-secondary)" }}>
+                  Activity in Curriculum Resources <span style={{ color: "var(--fg-tertiary)" }}>(optional — picking one fills the name)</span>
+                  <select value={modForm.gameId} onChange={(e) => pickGame(e.target.value)} style={inputStyle}>
+                    <option value="">Not in the library / other</option>
+                    {[...games].sort((a, b) => a.name.localeCompare(b.name)).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                </label>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <input placeholder="Game name" value={modForm.gameName} onChange={(e) => setModForm((f) => ({ ...f, gameName: e.target.value }))} style={{ ...inputStyle, flex: 1, minWidth: 160 }} autoFocus />
+                  <input placeholder="Game name" value={modForm.gameName} onChange={(e) => setModForm((f) => ({ ...f, gameName: e.target.value }))} style={{ ...inputStyle, flex: 1, minWidth: 160 }} autoFocus={!modForm.gameId} />
                   <input placeholder="Group / age level" value={modForm.ageLevel} onChange={(e) => setModForm((f) => ({ ...f, ageLevel: e.target.value }))} style={{ ...inputStyle, flex: 1, minWidth: 140 }} />
                 </div>
-                <textarea placeholder="What was modified?" rows={2} value={modForm.modification} onChange={(e) => setModForm((f) => ({ ...f, modification: e.target.value }))} style={{ ...inputStyle, resize: "vertical" }} />
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--fg-secondary)" }}>
-                  <input type="checkbox" checked={modForm.teacher} onChange={(e) => setModForm((f) => ({ ...f, teacher: e.target.checked }))} style={{ accentColor: "var(--primary)" }} />
-                  Teacher-suggested
-                </label>
+                <textarea placeholder="What was modified?" rows={2} value={modForm.modification} onChange={(e) => setModForm((f) => ({ ...f, modification: e.target.value }))} style={{ ...inputStyle, resize: "vertical" }} autoFocus={!!modForm.gameId} />
+                {!modForm.editingId && (
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--fg-secondary)" }}>
+                    <input type="checkbox" checked={modForm.teacher} onChange={(e) => setModForm((f) => ({ ...f, teacher: e.target.checked }))} style={{ accentColor: "var(--primary)" }} />
+                    Teacher-suggested
+                  </label>
+                )}
                 {modError && <InlineError message={modError} />}
-                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                  <button type="button" className="ss-btn" onClick={() => { setModForm((f) => ({ ...f, open: false })); setModError(null); }} disabled={savingMod}>Cancel</button>
-                  <button type="button" className="ss-btn ss-btn-primary" onClick={addMod} disabled={!modForm.gameName.trim() || !modForm.modification.trim() || savingMod}><Check className="ss-btn-icon" />{savingMod ? "Logging…" : "Log"}</button>
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap" }}>
+                  {modForm.editingId && canManage && (confirmDeleteMod ? (
+                    <span style={{ marginRight: "auto", display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--fg-secondary)" }}>
+                      Delete this modification? This can&apos;t be undone.
+                      <button type="button" className="ss-btn" onClick={() => setConfirmDeleteMod(false)} disabled={deletingMod}>Keep</button>
+                      <button type="button" className="ss-btn" onClick={deleteMod} disabled={deletingMod} style={{ color: "var(--danger)", borderColor: "var(--danger-border)" }}><Trash2 className="ss-btn-icon" />{deletingMod ? "Deleting…" : "Yes, delete"}</button>
+                    </span>
+                  ) : (
+                    <button type="button" className="ss-btn" onClick={() => setConfirmDeleteMod(true)} disabled={savingMod} style={{ marginRight: "auto", color: "var(--danger)" }}><Trash2 className="ss-btn-icon" />Delete</button>
+                  ))}
+                  <button type="button" className="ss-btn" onClick={closeModForm} disabled={savingMod || deletingMod}>Cancel</button>
+                  <button type="button" className="ss-btn ss-btn-primary" onClick={saveMod} disabled={!modForm.gameName.trim() || !modForm.modification.trim() || savingMod || deletingMod}>
+                    <Check className="ss-btn-icon" />{savingMod ? (modForm.editingId ? "Saving…" : "Logging…") : modForm.editingId ? "Save" : "Log"}
+                  </button>
                 </div>
               </div>
             )}
@@ -236,16 +352,31 @@ export default function ToDevelopPage() {
               <div style={{ padding: "12px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>Loading…</div>
             ) : mods.length === 0 ? (
               loadError ? null : <div style={{ padding: "12px 0", color: "var(--fg-tertiary)", fontSize: 13 }}>No modifications logged yet.</div>
-            ) : mods.map((m) => (
-              <div key={m.id} style={{ padding: "8px 0", borderBottom: "0.5px solid var(--border)" }}>
-                <div style={{ fontSize: 14, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  {m.gameName}
-                  {m.groupAgeLevel && <span className="ss-chip">{m.groupAgeLevel}</span>}
-                  {m.teacherSuggested && <span className="ss-chip">Teacher</span>}
+            ) : mods.map((m) => {
+              const linked = gameNameById(m.gameId);
+              return (
+              <div key={m.id} style={{ padding: "8px 0", borderBottom: "0.5px solid var(--border)", display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    {m.gameName}
+                    {linked && (
+                      <Link href={`/games?game=${m.gameId}`} className="ss-chip" title="Open in Curriculum Resources" style={{ textDecoration: "none" }}>
+                        <Link2 style={{ width: 11, height: 11 }} />{linked === m.gameName ? "In library" : linked}
+                      </Link>
+                    )}
+                    {m.groupAgeLevel && <span className="ss-chip">{m.groupAgeLevel}</span>}
+                    {m.teacherSuggested && <span className="ss-chip">Teacher</span>}
+                  </div>
+                  <div style={{ fontSize: 13, color: "var(--fg-secondary)", marginTop: 2, lineHeight: "var(--lh-body)" }}>{m.modification}</div>
                 </div>
-                <div style={{ fontSize: 13, color: "var(--fg-secondary)", marginTop: 2, lineHeight: "var(--lh-body)" }}>{m.modification}</div>
+                {canManage && (
+                  <button type="button" className="ss-btn" onClick={() => openEditMod(m)} aria-label={`Edit modification for ${m.gameName}`} title="Edit" style={{ flexShrink: 0, minHeight: 34, padding: "0 8px" }}>
+                    <Pencil className="ss-btn-icon" />
+                  </button>
+                )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

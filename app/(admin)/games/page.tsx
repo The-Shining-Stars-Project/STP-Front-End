@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, X, Sparkles, Target, Plus, Pencil, MapPin } from "lucide-react";
+import Link from "next/link";
+import { Search, X, Sparkles, Target, Plus, Pencil, MapPin, Trash2, Wand2 } from "lucide-react";
 import { gamesApi } from "@/lib/api/games";
 import { describeApiError } from "@/lib/api/client";
 import { useObjectiveAreas, usePrograms } from "@/lib/api/hooks";
@@ -70,6 +71,21 @@ export default function GamesLibraryPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorGame, setEditorGame] = useState<GameDetailDto | null>(null);
   const [reload, setReload] = useState(0);
+  // Delete (managers, Oct 2026): two-step confirm inside the drawer; errors show there too.
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // /games?game=<id> (from a modification's "In library" chip on To Develop) opens that
+  // activity's drawer directly, whatever the current filters are.
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get("game");
+    if (!wanted) return;
+    const req = ++detailReq.current;
+    gamesApi.getById(wanted)
+      .then((loaded) => { if (req === detailReq.current) { setSelected(loaded); setDetail(loaded); } })
+      .catch(() => { /* a stale link: the library still shows, nothing to open */ });
+  }, []);
 
   // Objective areas power the colour-coded filter chips (and the editor's area/sub-goal pickers).
 
@@ -113,6 +129,29 @@ export default function GamesLibraryPage() {
   function onSaved(saved: GameDetailDto) {
     setReload((r) => r + 1); // refetch with current filters
     if (selected?.id === saved.id) { setSelected(saved); setDetail(saved); }
+  }
+
+  function closeDrawer() {
+    setSelected(null);
+    setConfirmDelete(false);
+    setDeleteError(null);
+  }
+
+  // Permanent (client decision D13). The API refuses to empty the library (409) and says why;
+  // that message is shown as-is.
+  async function deleteGame() {
+    if (!selected || deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await gamesApi.delete(selected.id);
+      closeDrawer();
+      setReload((r) => r + 1);
+    } catch (e) {
+      setDeleteError(describeApiError(e, "Couldn't delete this activity. Try again."));
+    } finally {
+      setDeleting(false);
+    }
   }
 
   const areaById = useMemo(
@@ -314,7 +353,7 @@ export default function GamesLibraryPage() {
                     <Pencil style={{ width: 15, height: 15 }} />
                   </button>
                 )}
-                <button type="button" onClick={() => setSelected(null)} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4 }}>
+                <button type="button" onClick={closeDrawer} aria-label="Close" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-tertiary)", padding: 4 }}>
                   <X style={{ width: 16, height: 16 }} />
                 </button>
               </div>
@@ -349,11 +388,62 @@ export default function GamesLibraryPage() {
               {selected.whenToUse && (
                 <Section label="When to use"><p style={pStyle}>{selected.whenToUse}</p></Section>
               )}
+
+              {/* Modifications teachers logged against this activity (Oct 2026). Logging one
+                  happens on To Develop; the link lands there with this game picked. */}
+              {detail && (
+                <Section label={`Modifications${detail.modifications.length ? ` (${detail.modifications.length})` : ""}`}>
+                  {detail.modifications.length === 0 ? (
+                    <p style={pStyle}>None logged for this activity yet.</p>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {detail.modifications.map((m) => (
+                        <div key={m.id} style={{ fontSize: "var(--fs-body)" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", color: "var(--fg-secondary)", fontSize: "var(--fs-meta)" }}>
+                            {m.groupAgeLevel && <span className="ss-chip">{m.groupAgeLevel}</span>}
+                            {m.teacherSuggestedName ? <span>{m.teacherSuggestedName}</span> : m.teacherSuggested ? <span>Teacher</span> : null}
+                          </div>
+                          <p style={{ ...pStyle, color: "var(--fg)" }}>{m.modification}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <Link href={`/games/develop?game=${selected.id}`} className="ss-btn" style={{ alignSelf: "flex-start", textDecoration: "none" }}>
+                    <Wand2 className="ss-btn-icon" />Log modification
+                  </Link>
+                </Section>
+              )}
+
               {detailError ? (
                 <div role="alert" style={{ fontSize: "var(--fs-meta)", color: "var(--danger-text)" }}>{detailError}</div>
               ) : !detail && (
                 <div style={{ fontSize: "var(--fs-meta)", color: "var(--fg-tertiary)", display: "inline-flex", alignItems: "center", gap: 6 }}>
                   <Sparkles style={{ width: 13, height: 13 }} />Loading details…
+                </div>
+              )}
+
+              {canManage && detail && (
+                <div style={{ marginTop: "auto", paddingTop: "var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", flexDirection: "column", gap: 8 }}>
+                  {deleteError && <div role="alert" style={{ fontSize: "var(--fs-meta)", color: "var(--danger-text)" }}>{deleteError}</div>}
+                  {confirmDelete ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: "var(--fs-meta)", color: "var(--fg-secondary)" }}>
+                      <span>
+                        Delete <strong>{selected.name}</strong> from Curriculum Resources? This can&apos;t be undone.
+                        {detail.modifications.length > 0 && ` Its ${detail.modifications.length} logged modification${detail.modifications.length === 1 ? "" : "s"} are kept but unlinked.`}
+                        {" "}If it was promoted from an idea, the idea returns to To Develop.
+                      </span>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button type="button" className="ss-btn" onClick={() => setConfirmDelete(false)} disabled={deleting}>Keep</button>
+                        <button type="button" className="ss-btn" onClick={deleteGame} disabled={deleting} style={{ color: "var(--danger)", borderColor: "var(--danger-border)" }}>
+                          <Trash2 className="ss-btn-icon" />{deleting ? "Deleting…" : "Yes, delete"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button type="button" className="ss-btn" onClick={() => setConfirmDelete(true)} style={{ alignSelf: "flex-start", color: "var(--danger)" }}>
+                      <Trash2 className="ss-btn-icon" />Delete activity
+                    </button>
+                  )}
                 </div>
               )}
             </div>

@@ -113,6 +113,22 @@ function formStatusOf(status: TaskStatus): AddTaskForm["status"] {
   return status === "overdue" ? "upcoming" : status;
 }
 
+/**
+ * Deep links from the Calendar and Annual Planning (Oct 2026): /tasks?edit=<taskId> opens that
+ * task's editor once the list has loaded; /tasks?add=<yyyy-mm-dd> opens Add task with that due
+ * date. Admin pages render client-side only (AuthGuard), so reading the URL in an initializer
+ * is safe. The param is read once; the URL isn't rewritten, so a refresh re-opens the same thing.
+ */
+function readDeepLink(): { edit: string | null; add: string | null } {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    const add = q.get("add");
+    return { edit: q.get("edit"), add: add && /^\d{4}-\d{2}-\d{2}$/.test(add) ? add : null };
+  } catch {
+    return { edit: null, add: null };
+  }
+}
+
 /** Assignee filter values besides a staff id. */
 const ALL_ASSIGNEES = "all";
 const UNASSIGNED = "unassigned";
@@ -196,8 +212,12 @@ export default function TasksPage() {
   // Keyed by project id; projects start collapsed.
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
   const [doneTasks, setDoneTasks] = useState<Record<string, boolean>>({});
-  const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState<AddTaskForm>(EMPTY_TASK_FORM);
+  const [deepLink] = useState(readDeepLink);
+  // ?add=<date> opens the Add task modal straight away with the due date filled in.
+  const [modalOpen, setModalOpen] = useState(() => deepLink.add !== null);
+  const [form, setForm] = useState<AddTaskForm>(() => (deepLink.add ? { ...EMPTY_TASK_FORM, due: deepLink.add } : EMPTY_TASK_FORM));
+  // ?edit=<id> has to wait for the projects to arrive; resolved during render below.
+  const [pendingEditId, setPendingEditId] = useState<string | null>(deepLink.edit);
   const [taskSaving, setTaskSaving] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [projModalOpen, setProjModalOpen] = useState(false);
@@ -220,6 +240,21 @@ export default function TasksPage() {
   // openModal does when the list is already here. Adjusted during render, not in an effect.
   if (modalOpen && form.projectIdx === null && projects.length === 1) {
     setForm((f) => ({ ...f, projectIdx: 0, projectLocked: true }));
+  }
+
+  // The ?edit= deep link: open that task's editor once the projects are here. Same
+  // adjust-during-render pattern as above. A task that no longer exists simply isn't opened.
+  if (pendingEditId !== null && projectsQ.data) {
+    const target = projects.flatMap((p) => p.tasks).find((t) => t.id === pendingEditId);
+    setPendingEditId(null);
+    if (target) {
+      setForm({
+        editingId: target.id, name: target.name, ctx: target.ctx ?? "",
+        projectIdx: projects.findIndex((p) => p.id === target.projectId), projectLocked: true,
+        assigneeId: target.assignedToId ?? "", due: target.dueIso ?? "", prio: target.prio, status: formStatusOf(target.status),
+      });
+      setModalOpen(true);
+    }
   }
 
   function matchesAssignee(t: Task): boolean {

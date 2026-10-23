@@ -527,6 +527,13 @@ export interface CreateAgeModificationDto {
   teacherSuggestedId?: Guid | null;
   gameId?: Guid | null;
 }
+/** Full replace; a null gameId unlinks the modification from the library. */
+export interface UpdateAgeModificationDto {
+  gameName: string;
+  groupAgeLevel: string;
+  modification: string;
+  gameId: Guid | null;
+}
 
 // ── Per-Star planning ─────────────────────────────────────────────────────────
 
@@ -1155,6 +1162,13 @@ export interface KeyArtsDateDto {
   observanceType: string | null;
   programmingTieIn: string | null;
 }
+/** A key arts date placed in a specific year; start/end are yyyy-MM-dd or null when the text couldn't be read. */
+export interface ResolvedKeyArtsDateDto extends KeyArtsDateDto {
+  start: string | null;
+  end: string | null;
+  /** Covers the whole month or more: banner material, not a day chip. */
+  isMonthLong: boolean;
+}
 
 export interface UpsertCalendarThemeDto {
   month: number;
@@ -1265,6 +1279,8 @@ export interface GameSummaryDto {
 export interface GameDetailDto extends GameSummaryDto {
   description: string | null;
   bestForVariations: string | null;
+  /** Modifications logged against this game, newest first. */
+  modifications: AgeModificationDto[];
 }
 
 export interface GameFilter {

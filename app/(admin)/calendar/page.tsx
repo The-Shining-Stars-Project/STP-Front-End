@@ -1,15 +1,17 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { Plus, ChevronLeft, ChevronRight, MapPin, Clock, X, Pencil, Trash2, Check, Loader2, Info, AlertCircle } from "lucide-react";
+import Link from "next/link";
+import { Plus, ChevronLeft, ChevronRight, MapPin, Clock, X, Pencil, Trash2, Check, Loader2, Info, AlertCircle, ListChecks, CalendarRange, ExternalLink } from "lucide-react";
 import { parseLocalDate, localDateKey } from "@/lib/format";
 import { linkify } from "@/lib/linkify";
 import { calendarApi } from "@/lib/api/calendar";
+import { yearCalendarApi } from "@/lib/api/yearCalendar";
 import { ApiError, describeApiError } from "@/lib/api/client";
-import { usePrograms, useReferenceLists } from "@/lib/api/hooks";
+import { usePrograms, useReferenceLists, useProjects } from "@/lib/api/hooks";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { programPillStyle, programTint } from "@/lib/programColor";
-import type { CalendarEventDto, ProgramSummaryDto, CreateCalendarEventDto, SiteDto } from "@/lib/types/api";
+import type { CalendarEventDto, ProgramSummaryDto, CreateCalendarEventDto, SiteDto, ProjectTaskDto, ResolvedKeyArtsDateDto, CalendarThemeDto } from "@/lib/types/api";
 import ProgramPills from "../components/ProgramPills";
 
 // ── Calendar math ─────────────────────────────────────────────────────────────
@@ -82,6 +84,45 @@ function loadHiddenPrograms(): Set<string> {
 
 function saveHiddenPrograms(hidden: Set<string>) {
   try { window.localStorage.setItem(HIDDEN_PROGRAMS_KEY, JSON.stringify([...hidden])); } catch { /* storage blocked */ }
+}
+
+// ── Layers: tasks and Annual Planning (Oct 2026) ──────────────────────────────
+//
+// Rachel wants the CRM calendar to work like Google Calendar — events and tasks in one place —
+// so tasks with a due date and the Annual Planning key arts dates can be shown alongside events.
+// Both are on by default and remembered per browser, like the program filter.
+
+type Layers = { tasks: boolean; tasksMine: boolean; annual: boolean };
+const LAYERS_KEY = "calendar.layers";
+const DEFAULT_LAYERS: Layers = { tasks: true, tasksMine: false, annual: true };
+
+function loadLayers(): Layers {
+  try {
+    const raw = window.localStorage.getItem(LAYERS_KEY);
+    const v: unknown = raw ? JSON.parse(raw) : null;
+    if (v && typeof v === "object") {
+      const o = v as Partial<Record<keyof Layers, unknown>>;
+      return {
+        tasks: typeof o.tasks === "boolean" ? o.tasks : DEFAULT_LAYERS.tasks,
+        tasksMine: typeof o.tasksMine === "boolean" ? o.tasksMine : DEFAULT_LAYERS.tasksMine,
+        annual: typeof o.annual === "boolean" ? o.annual : DEFAULT_LAYERS.annual,
+      };
+    }
+  } catch { /* storage blocked */ }
+  return DEFAULT_LAYERS;
+}
+function saveLayers(l: Layers) {
+  try { window.localStorage.setItem(LAYERS_KEY, JSON.stringify(l)); } catch { /* storage blocked */ }
+}
+
+/** A task due on a day, with its project's title for context. */
+type DueTask = ProjectTaskDto & { projectTitle: string };
+
+/** Something on a day that isn't an event. */
+type Extra = { kind: "task"; task: DueTask } | { kind: "keydate"; date: ResolvedKeyArtsDateDto };
+
+function shortDate(iso: string): string {
+  return parseLocalDate(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 // ── Add Event Modal ───────────────────────────────────────────────────────────
@@ -294,7 +335,7 @@ export default function CalendarPage() {
   // Cached + shared via React Query (#34).
   const programs: ProgramSummaryDto[] = usePrograms().data ?? [];
   const sites: SiteDto[] = useReferenceLists().data?.sites ?? [];
-  const { canManage } = useAuth();
+  const { user, canManage } = useAuth();
   const [loading,   setLoading]   = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
@@ -303,8 +344,50 @@ export default function CalendarPage() {
   const [editingEvent, setEditingEvent] = useState<CalendarEventDto | null>(null);
   // Admin pages render client-side only (AuthGuard), so reading storage in the initializer is safe.
   const [hiddenPrograms, setHiddenPrograms] = useState<Set<string>>(loadHiddenPrograms);
+  const [layers, setLayers] = useState<Layers>(loadLayers);
+  function updateLayers(patch: Partial<Layers>) {
+    const next = { ...layers, ...patch };
+    setLayers(next);
+    saveLayers(next);
+  }
+
+  // Tasks layer: the projects query is shared with the Tasks page, so this is usually cached.
+  const projectsQ = useProjects();
+  const myStaffId = user?.staffMemberId ?? null;
+  const dueTasks = useMemo<DueTask[]>(() => {
+    if (!layers.tasks) return [];
+    return (projectsQ.data ?? []).flatMap((p) => p.tasks
+      .filter((t) => t.dueDate && t.taskStatus !== "Done" && (!layers.tasksMine || t.assignedToId === myStaffId))
+      .map((t) => ({ ...t, projectTitle: p.title })));
+  }, [projectsQ.data, layers.tasks, layers.tasksMine, myStaffId]);
+
+  // Annual Planning layer: themes once, key dates per year in view (a week can straddle two).
+  const [themes, setThemes] = useState<CalendarThemeDto[] | null>(null);
+  const [keyDatesByYear, setKeyDatesByYear] = useState<Record<number, ResolvedKeyArtsDateDto[]>>({});
 
   const weekDays = useMemo(() => weekOf(weekAnchor), [weekAnchor]);
+  const yearsInView = useMemo(
+    () => [...new Set(viewMode === "week" ? weekDays.map((d) => d.date.getFullYear()) : [viewYear])].join(","),
+    [viewMode, weekDays, viewYear],
+  );
+  useEffect(() => {
+    if (!layers.annual) return;
+    let active = true;
+    if (themes === null) {
+      yearCalendarApi.getCalendar()
+        .then((d) => { if (active) setThemes(d.themes); })
+        .catch(() => { /* the banner just stays off; events still load */ });
+    }
+    for (const y of yearsInView.split(",").map(Number)) {
+      if (keyDatesByYear[y]) continue;
+      yearCalendarApi.getResolvedKeyArtsDates(y)
+        .then((list) => { if (active) setKeyDatesByYear((prev) => ({ ...prev, [y]: list })); })
+        .catch(() => { /* same: a missing layer, not a broken calendar */ });
+    }
+    return () => { active = false; };
+    // keyDatesByYear/themes are caches checked inside; re-running on their change would refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layers.annual, yearsInView]);
 
   const isCurrentMonth = viewYear === today.year && viewMonth === today.month;
 
@@ -387,6 +470,47 @@ export default function CalendarPage() {
     }, {} as Record<string, CalendarEventDto[]>);
   }, [visibleEvents]);
 
+  // Tasks and key arts dates by day. A date range sits on its start day (the chip says how far
+  // it runs); month-long and unreadable ("Varies") dates go in the banner instead.
+  const extrasByDate = useMemo(() => {
+    const acc: Record<string, Extra[]> = {};
+    for (const t of dueTasks) (acc[t.dueDate!] = acc[t.dueDate!] ?? []).push({ kind: "task", task: t });
+    if (layers.annual) {
+      for (const list of Object.values(keyDatesByYear))
+        for (const d of list)
+          if (d.start && !d.isMonthLong) (acc[d.start] = acc[d.start] ?? []).push({ kind: "keydate", date: d });
+    }
+    return acc;
+  }, [dueTasks, keyDatesByYear, layers.annual]);
+
+  // The banner for the viewed month: its theme plus the observances that span it.
+  const monthTheme = layers.annual ? themes?.find((t) => t.month === viewMonth) ?? null : null;
+  const monthLongDates = useMemo(
+    () => (layers.annual ? (keyDatesByYear[viewYear] ?? []).filter((d) => d.month === viewMonth && (d.isMonthLong || !d.start)) : []),
+    [layers.annual, keyDatesByYear, viewYear, viewMonth],
+  );
+
+  function keyDateLabel(d: ResolvedKeyArtsDateDto): string {
+    return d.start && d.end && d.end !== d.start ? `${d.observance} (through ${shortDate(d.end)})` : d.observance;
+  }
+  function extraChip(x: Extra) {
+    if (x.kind === "task") {
+      const t = x.task;
+      return (
+        <Link key={`t-${t.id}`} href={`/tasks?edit=${t.id}`} className={`evt task${t.isOverdue ? " is-overdue" : ""}`}
+          title={`Task: ${t.name} · ${t.projectTitle}${t.assignedToName ? ` · ${t.assignedToName}` : ""}`}
+          onClick={(e) => e.stopPropagation()} style={{ textDecoration: "none" }}>
+          ☐ {t.name}
+        </Link>
+      );
+    }
+    return (
+      <span key={`k-${x.date.id}`} className="evt keydate" title={`${keyDateLabel(x.date)}${x.date.programmingTieIn ? ` · ${x.date.programmingTieIn}` : ""}`}>
+        {keyDateLabel(x.date)}
+      </span>
+    );
+  }
+
   const cells = useMemo(() => buildCells(viewYear, viewMonth), [viewYear, viewMonth]);
 
   function shiftWeek(days: number) {
@@ -442,6 +566,7 @@ export default function CalendarPage() {
       ? (isCurrentMonth ? todayIso : null)
       : (weekHasToday ? todayIso : weekDays[0].iso));
   const detailEvents = detailDate ? (eventsByDate[detailDate] ?? []) : [];
+  const detailExtras = detailDate ? (extrasByDate[detailDate] ?? []) : [];
 
   const detailLabel = detailDate
     ? parseLocalDate(detailDate).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
@@ -531,7 +656,48 @@ export default function CalendarPage() {
                 </button>
               );
             })()}
+            <span aria-hidden="true" style={{ width: 1, height: 22, background: "var(--border-strong)", margin: "0 4px" }} />
+            {/* Layers (Oct 2026): tasks due and Annual Planning dates, alongside events. */}
+            <button type="button" className={`ss-chip${layers.tasks ? " is-active" : ""}`} aria-pressed={layers.tasks} style={{ minHeight: 34 }}
+              title="Tasks with a due date (finished ones hidden)" onClick={() => updateLayers({ tasks: !layers.tasks })}>
+              <ListChecks style={{ width: 12, height: 12 }} aria-hidden="true" />Tasks
+              {layers.tasks && <Check style={{ width: 12, height: 12 }} aria-hidden="true" />}
+            </button>
+            {layers.tasks && (
+              <button type="button" className={`ss-chip${layers.tasksMine ? " is-active" : ""}`} aria-pressed={layers.tasksMine} style={{ minHeight: 34 }}
+                title={myStaffId ? "Only tasks assigned to you" : "Your account isn't linked to a staff member, so no tasks are 'yours' yet"}
+                disabled={!myStaffId} onClick={() => updateLayers({ tasksMine: !layers.tasksMine })}>
+                Mine only
+                {layers.tasksMine && <Check style={{ width: 12, height: 12 }} aria-hidden="true" />}
+              </button>
+            )}
+            <button type="button" className={`ss-chip${layers.annual ? " is-active" : ""}`} aria-pressed={layers.annual} style={{ minHeight: 34 }}
+              title="Each month's theme and key arts dates from Annual Planning" onClick={() => updateLayers({ annual: !layers.annual })}>
+              <CalendarRange style={{ width: 12, height: 12 }} aria-hidden="true" />Annual Planning
+              {layers.annual && <Check style={{ width: 12, height: 12 }} aria-hidden="true" />}
+            </button>
           </div>
+
+          {layers.annual && viewMode === "month" && (monthTheme || monthLongDates.length > 0) && (
+            <div className="cal-theme-banner" role="note">
+              <CalendarRange style={{ width: 14, height: 14, flexShrink: 0 }} aria-hidden="true" />
+              {monthTheme && (
+                <span>
+                  <span className="theme">{monthTheme.themeTitle}</span>
+                  {monthTheme.themeSubtitle && <span> — {monthTheme.themeSubtitle}</span>}
+                  {monthTheme.productionPhase && <span> · {monthTheme.productionPhase}</span>}
+                </span>
+              )}
+              {monthLongDates.map((d) => (
+                <span key={d.id} className="ss-chip" title={d.programmingTieIn ?? undefined}>
+                  <span style={{ color: "var(--fg-tertiary)" }}>{d.dateText}</span>&nbsp;{d.observance}
+                </span>
+              ))}
+              <Link href="/year-calendar" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4, color: "var(--fg-secondary)" }}>
+                Annual Planning<ExternalLink style={{ width: 11, height: 11 }} aria-hidden="true" />
+              </Link>
+            </div>
+          )}
 
           {loadError && (
             <div role="alert" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: "var(--space-3)", padding: "8px 12px", borderRadius: "var(--r-md)", background: "var(--danger-fill, #fce8e8)", color: "var(--danger)", fontSize: 13 }}>
@@ -568,6 +734,7 @@ export default function CalendarPage() {
                       const isToday = d.iso === todayIso;
                       const isSelected = d.iso === selectedDate;
                       const evs = eventsByDate[d.iso] ?? [];
+                      const extras = extrasByDate[d.iso] ?? [];
                       return (
                         <div
                           key={d.iso}
@@ -581,7 +748,8 @@ export default function CalendarPage() {
                               {e.timeRange ? `${e.timeRange} · ` : ""}{e.title}
                             </span>
                           ))}
-                          {evs.length === 0 && <span style={{ fontSize: 11, color: "var(--fg-tertiary)" }}>—</span>}
+                          {extras.map(extraChip)}
+                          {evs.length === 0 && extras.length === 0 && <span style={{ fontSize: 11, color: "var(--fg-tertiary)" }}>—</span>}
                         </div>
                       );
                     })}
@@ -599,8 +767,11 @@ export default function CalendarPage() {
                     const isToday    = iso === todayIso;
                     const isSelected = iso !== null && iso === selectedDate;
                     const evs  = iso ? (eventsByDate[iso] ?? []) : [];
+                    const extras = iso ? (extrasByDate[iso] ?? []) : [];
+                    // Events first, then tasks and key dates, three chips per cell in all.
                     const shown = evs.slice(0, 3);
-                    const extra = evs.length - shown.length;
+                    const shownExtras = extras.slice(0, Math.max(0, 3 - shown.length));
+                    const extra = evs.length + extras.length - shown.length - shownExtras.length;
                     return (
                       <div
                         key={idx}
@@ -611,6 +782,7 @@ export default function CalendarPage() {
                         {shown.map((e) => (
                           <span key={e.id} className={evtClass(e)} title={`${e.title} · ${programLabel(e)}`} style={evtStyle(e)}>{e.title}</span>
                         ))}
+                        {shownExtras.map(extraChip)}
                         {extra > 0 && <span className="more-link">+{extra} more</span>}
                       </div>
                     );
@@ -624,9 +796,9 @@ export default function CalendarPage() {
             <div className="cal-detail">
               <div className="section">
                 <div className="detail-h">{detailLabel}</div>
-                {detailEvents.length === 0 ? (
+                {detailEvents.length === 0 && detailExtras.length === 0 ? (
                   <div style={{ padding: "10px 0", fontSize: 13, color: "var(--fg-tertiary)" }}>
-                    {detailDate ? "No events this day" : "Click a day to see its events"}
+                    {detailDate ? "Nothing on this day" : "Click a day to see its events"}
                   </div>
                 ) : detailEvents.map(e => (
                   <div key={e.id} className="evt-card">
@@ -647,10 +819,37 @@ export default function CalendarPage() {
                     {e.meta && <div className="em" style={{ alignItems: "flex-start" }}><Info style={{ marginTop: 2, flexShrink: 0 }} /><span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{linkify(e.meta)}</span></div>}
                   </div>
                 ))}
+                {/* Tasks due and key arts dates for the day (Oct 2026). Tasks open on the Tasks page. */}
+                {detailExtras.map((x) => x.kind === "task" ? (
+                  <Link key={`t-${x.task.id}`} href={`/tasks?edit=${x.task.id}`} className="evt-card" style={{ textDecoration: "none", color: "inherit" }} title="Open in Tasks">
+                    <div className="et" style={{ alignItems: "flex-start" }}>
+                      <ListChecks style={{ width: 13, height: 13, marginTop: 3, flexShrink: 0, color: x.task.isOverdue ? "var(--danger-text)" : "var(--fg-tertiary)" }} aria-hidden="true" />
+                      <span style={{ flex: 1 }}>{x.task.name}</span>
+                      <ExternalLink style={{ width: 12, height: 12, color: "var(--fg-tertiary)" }} aria-hidden="true" />
+                    </div>
+                    <div className="em" style={{ paddingLeft: 19 }}>
+                      Task · {x.task.projectTitle}{x.task.assignedToName ? ` · ${x.task.assignedToName}` : " · Unassigned"}{x.task.isOverdue ? " · Overdue" : ""}
+                    </div>
+                  </Link>
+                ) : (
+                  <div key={`k-${x.date.id}`} className="evt-card">
+                    <div className="et" style={{ alignItems: "flex-start" }}>
+                      <CalendarRange style={{ width: 13, height: 13, marginTop: 3, flexShrink: 0, color: "var(--fg-tertiary)" }} aria-hidden="true" />
+                      <span style={{ flex: 1 }}>{keyDateLabel(x.date)}</span>
+                    </div>
+                    <div className="em" style={{ paddingLeft: 19 }}>Key arts date{x.date.observanceType ? ` · ${x.date.observanceType}` : ""}</div>
+                    {x.date.programmingTieIn && <div className="em" style={{ paddingLeft: 19, alignItems: "flex-start" }}><span>{x.date.programmingTieIn}</span></div>}
+                  </div>
+                ))}
                 {canManage && (
                   <button className="btn-dashed" type="button" onClick={() => setAddOpen(true)}>
                     <Plus />Add event
                   </button>
+                )}
+                {layers.tasks && detailDate && (
+                  <Link href={`/tasks?add=${detailDate}`} className="btn-dashed" style={{ textDecoration: "none" }} title="New task due this day">
+                    <Plus />Add task due {shortDate(detailDate)}
+                  </Link>
                 )}
               </div>
 
