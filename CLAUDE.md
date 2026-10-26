@@ -77,6 +77,15 @@ route protection lives in `proxy.ts`, not `middleware.ts`.
   teaching staff only (`isTeachingRole`: Teacher, Teacher Assistant), so admins and coordinators
   don't "populate in data". A dual-enrolled star's row only takes staff assigned to that row's program.
 
+## Repeat (events and tasks)
+
+- The API returns a repeating event once per occurrence: `date` is the occurrence, `id` the series,
+  `seriesStart` the first one. Key rows by `${id}:${date}`, not `id`, or a weekly series collides.
+- Editing or removing an occurrence asks This event / This and following / All events, and passes
+  `scope` + `occurrence` to `calendarApi`. After any save, reload the months; don't splice.
+- Use `RepeatPicker` and `lib/repeat` (`repeatSummary`, `repeatToDto`) rather than new copies.
+  Show a repeat with an icon and words, never colour alone.
+
 ## Before handing work back
 
 Run `npm run typecheck`, `npm run lint`, and `npm run build`. Some lint errors already exist on

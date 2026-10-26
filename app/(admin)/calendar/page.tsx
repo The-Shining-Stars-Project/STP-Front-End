@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { Plus, ChevronLeft, ChevronRight, MapPin, Clock, X, Pencil, Trash2, Check, Loader2, Info, AlertCircle, ListChecks, CalendarRange, ExternalLink } from "lucide-react";
+import { Plus, ChevronLeft, ChevronRight, MapPin, Clock, X, Pencil, Trash2, Check, Loader2, Info, AlertCircle, ListChecks, CalendarRange, ExternalLink, Repeat } from "lucide-react";
 import { parseLocalDate, localDateKey } from "@/lib/format";
 import { linkify } from "@/lib/linkify";
 import { calendarApi } from "@/lib/api/calendar";
@@ -11,8 +11,11 @@ import { ApiError, describeApiError } from "@/lib/api/client";
 import { usePrograms, useReferenceLists, useProjects } from "@/lib/api/hooks";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { programPillStyle, programTint } from "@/lib/programColor";
-import type { CalendarEventDto, ProgramSummaryDto, CreateCalendarEventDto, SiteDto, ProjectTaskDto, ResolvedKeyArtsDateDto, CalendarThemeDto } from "@/lib/types/api";
+import type { CalendarEventDto, ProgramSummaryDto, CreateCalendarEventDto, SiteDto, ProjectTaskDto, ResolvedKeyArtsDateDto, CalendarThemeDto, EventEditScope } from "@/lib/types/api";
 import ProgramPills from "../components/ProgramPills";
+import RepeatPicker from "../components/RepeatPicker";
+import { useEscapeKey } from "@/lib/useEscapeKey";
+import { NO_REPEAT, repeatFromDto, repeatProblem, repeatSummary, repeatToDto, type RepeatForm } from "@/lib/repeat";
 
 // ── Calendar math ─────────────────────────────────────────────────────────────
 
@@ -127,15 +130,26 @@ function shortDate(iso: string): string {
 
 // ── Add Event Modal ───────────────────────────────────────────────────────────
 
-type EventForm = { title: string; date: string; programId: string; location: string; timeRange: string; details: string; siteIds: string[] };
-const EMPTY_FORM: EventForm = { title: "", date: "", programId: "", location: "", timeRange: "", details: "", siteIds: [] };
+type EventForm = { title: string; date: string; programId: string; location: string; timeRange: string; details: string; siteIds: string[]; repeat: RepeatForm };
+const EMPTY_FORM: EventForm = { title: "", date: "", programId: "", location: "", timeRange: "", details: "", siteIds: [], repeat: NO_REPEAT };
 
+// For an occurrence of a repeating event, `date` is the clicked occurrence (e.date), not the
+// series start; the API shifts the series by however far that date is moved.
 function formFrom(e: CalendarEventDto): EventForm {
   return {
     title: e.title, date: e.date, programId: e.programId ?? "",
     location: e.location ?? "", timeRange: e.timeRange ?? "", details: e.meta ?? "", siteIds: [...e.siteIds],
+    repeat: repeatFromDto(e),
   };
 }
+
+const isRepeating = (e: CalendarEventDto) => e.repeatFrequency !== "None";
+
+const SCOPES: { value: EventEditScope; label: string }[] = [
+  { value: "this", label: "This event" },
+  { value: "following", label: "This and following" },
+  { value: "all", label: "All events" },
+];
 
 /**
  * One modal for both adding and editing an event. Edit mode carries a Remove button (two
@@ -167,24 +181,31 @@ function EventModal({
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const canSubmit = form.title.trim().length > 0 && form.date !== "" && !saving && !deleting;
+  // Editing or removing an occurrence of a repeating event asks which part of the series first.
+  const series = existing !== null && isRepeating(existing);
+  const [askScope, setAskScope] = useState<null | "save" | "delete">(null);
+  const repeatError = repeatProblem(form.repeat, form.date);
+  const canSubmit = form.title.trim().length > 0 && form.date !== "" && !repeatError && !saving && !deleting;
+  useEscapeKey(() => { if (askScope) setAskScope(null); else onClose(); }, !saving && !deleting);
 
   function toggleSite(id: string) {
     setForm((f) => ({ ...f, siteIds: f.siteIds.includes(id) ? f.siteIds.filter((x) => x !== id) : [...f.siteIds, id] }));
   }
 
-  async function handleDelete() {
+  async function handleDelete(scope: EventEditScope = "all") {
     if (!existing) return;
-    if (!confirmDelete) { setConfirmDelete(true); return; }
+    if (series && askScope !== "delete") { setAskScope("delete"); return; }
+    if (!series && !confirmDelete) { setConfirmDelete(true); return; }
     setDeleting(true);
     setError(null);
     try {
-      await calendarApi.remove(existing.id);
+      await calendarApi.remove(existing.id, scope, series ? existing.date : undefined);
       onDeleted(existing.id);
     } catch (err) {
       setError(err instanceof ApiError && err.detail ? err.detail : "Could not remove the event — try again.");
       setDeleting(false);
       setConfirmDelete(false);
+      setAskScope(null);
     }
   }
 
@@ -195,7 +216,8 @@ function EventModal({
     background: "var(--surface)", outline: "none",
   };
 
-  async function handleSubmit() {
+  async function handleSubmit(scope: EventEditScope = "all") {
+    if (series && askScope !== "save") { setAskScope("save"); return; }
     setSaving(true);
     setError(null);
     const dto: CreateCalendarEventDto = {
@@ -206,13 +228,17 @@ function EventModal({
       timeRange: form.timeRange.trim() || undefined,
       meta: form.details.trim() || undefined,
       siteIds: form.siteIds,
+      ...repeatToDto(form.repeat),
     };
     try {
-      const saved = existing ? await calendarApi.update(existing.id, dto) : await calendarApi.create(dto);
+      const saved = existing
+        ? await calendarApi.update(existing.id, dto, scope, series ? existing.date : undefined)
+        : await calendarApi.create(dto);
       onSaved(saved);
     } catch (err) {
       setError(err instanceof ApiError && err.detail ? err.detail : "Could not save event — make sure the backend is running.");
       setSaving(false);
+      setAskScope(null);
     }
   }
 
@@ -287,6 +313,13 @@ function EventModal({
               onChange={(e) => setForm(f => ({ ...f, details: e.target.value }))}
               style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
           </div>
+
+          <RepeatPicker value={form.repeat} onChange={(repeat) => setForm((f) => ({ ...f, repeat }))} startIso={form.date || null} />
+          {series && (
+            <div style={{ fontSize: 12, color: "var(--fg-tertiary)", marginTop: -8 }}>
+              Part of a repeating series starting {parseLocalDate(existing!.seriesStart).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}. You&apos;ll choose which events to change when you save.
+            </div>
+          )}
         </div>
 
         {error && (
@@ -295,9 +328,35 @@ function EventModal({
           </div>
         )}
 
+        {askScope ? (
+          // Repeating event: which occurrences does this save / remove cover? (Like Google Calendar.)
+          <div role="group" aria-label={askScope === "save" ? "Save changes to" : "Remove"}
+            style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>
+              {askScope === "save" ? "Save changes to…" : "Remove…"}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {SCOPES.map((s) => (
+                <button key={s.value} type="button" className="ss-btn" disabled={saving || deleting}
+                  style={askScope === "delete" ? { color: "var(--danger)" } : undefined}
+                  onClick={() => (askScope === "save" ? handleSubmit(s.value) : handleDelete(s.value))}>
+                  {(saving || deleting) ? <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} /> : askScope === "delete" ? <Trash2 className="ss-btn-icon" /> : <Check className="ss-btn-icon" />}
+                  {s.label}
+                </button>
+              ))}
+              <span style={{ flex: 1 }} />
+              <button className="ss-btn" type="button" disabled={saving || deleting} onClick={() => setAskScope(null)}>Back</button>
+            </div>
+            {askScope === "save" && (
+              <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>
+                &ldquo;This event&rdquo; saves it as a one-off on its own; the repeat settings apply to &ldquo;following&rdquo; and &ldquo;all&rdquo;.
+              </div>
+            )}
+          </div>
+        ) : (
         <div style={{ padding: "var(--space-3) var(--space-4)", borderTop: "0.5px solid var(--border)", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
           {editing && (
-            <button className="ss-btn" type="button" onClick={handleDelete} disabled={deleting || saving}
+            <button className="ss-btn" type="button" onClick={() => handleDelete()} disabled={deleting || saving}
               style={confirmDelete ? { background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" } : { color: "var(--danger)" }}>
               {deleting ? <Loader2 className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 className="ss-btn-icon" />}
               {deleting ? "Removing…" : confirmDelete ? "Confirm remove" : "Remove"}
@@ -305,11 +364,12 @@ function EventModal({
           )}
           <span style={{ flex: 1 }} />
           <button className="ss-btn" type="button" onClick={onClose} disabled={saving || deleting}>Cancel</button>
-          <button className="ss-btn ss-btn-primary" type="button" disabled={!canSubmit} onClick={handleSubmit}>
+          <button className="ss-btn ss-btn-primary" type="button" disabled={!canSubmit} onClick={() => handleSubmit()}>
             {editing ? <Check className="ss-btn-icon" /> : <Plus className="ss-btn-icon" />}
             {saving ? "Saving…" : editing ? "Save changes" : "Add event"}
           </button>
         </div>
+        )}
       </div>
     </div>
   );
@@ -442,6 +502,11 @@ export default function CalendarPage() {
   }
   // Spelled out next to the colour so the program is never told by colour alone.
   const programLabel = (e: CalendarEventDto) => e.programName ?? "Org-wide";
+  // Repeating events say so in the tooltip and with an icon on the chip.
+  const eventTitle = (e: CalendarEventDto) =>
+    `${e.title} · ${programLabel(e)}${isRepeating(e) ? ` · ${repeatSummary(repeatFromDto(e), e.seriesStart)}` : ""}`;
+  const repeatGlyph = (e: CalendarEventDto) =>
+    isRepeating(e) ? <Repeat aria-label="Repeats" style={{ width: 10, height: 10, marginRight: 3, verticalAlign: -1 }} /> : null;
 
   // ── Program filter ──
   function updateHidden(next: Set<string>) {
@@ -744,8 +809,8 @@ export default function CalendarPage() {
                         >
                           <span className="dnum">{d.date.getDate()}</span>
                           {evs.map((e) => (
-                            <span key={e.id} className={evtClass(e)} title={`${e.title} · ${programLabel(e)}`} style={{ ...evtStyle(e), whiteSpace: "normal" }}>
-                              {e.timeRange ? `${e.timeRange} · ` : ""}{e.title}
+                            <span key={`${e.id}:${e.date}`} className={evtClass(e)} title={eventTitle(e)} style={{ ...evtStyle(e), whiteSpace: "normal" }}>
+                              {repeatGlyph(e)}{e.timeRange ? `${e.timeRange} · ` : ""}{e.title}
                             </span>
                           ))}
                           {extras.map(extraChip)}
@@ -780,7 +845,7 @@ export default function CalendarPage() {
                       >
                         <span className="dnum">{c.d}</span>
                         {shown.map((e) => (
-                          <span key={e.id} className={evtClass(e)} title={`${e.title} · ${programLabel(e)}`} style={evtStyle(e)}>{e.title}</span>
+                          <span key={`${e.id}:${e.date}`} className={evtClass(e)} title={eventTitle(e)} style={evtStyle(e)}>{repeatGlyph(e)}{e.title}</span>
                         ))}
                         {shownExtras.map(extraChip)}
                         {extra > 0 && <span className="more-link">+{extra} more</span>}
@@ -801,7 +866,7 @@ export default function CalendarPage() {
                     {detailDate ? "Nothing on this day" : "Click a day to see its events"}
                   </div>
                 ) : detailEvents.map(e => (
-                  <div key={e.id} className="evt-card">
+                  <div key={`${e.id}:${e.date}`} className="evt-card">
                     <div className="et" style={{ alignItems: "flex-start" }}>
                       {eventDot(e, { marginTop: 5 })}
                       <span style={{ flex: 1 }}>{e.title}</span>
@@ -813,6 +878,7 @@ export default function CalendarPage() {
                       )}
                     </div>
                     <div className="em" style={{ paddingLeft: 14 }}>{programLabel(e)}</div>
+                    {isRepeating(e) && <div className="em"><Repeat />{repeatSummary(repeatFromDto(e), e.seriesStart)}</div>}
                     {e.siteNames.length > 0 && <div className="em"><MapPin />{e.siteNames.join(" · ")}</div>}
                     {e.location  && <div className="em"><MapPin style={{ visibility: e.siteNames.length ? "hidden" : "visible" }} /><span>{linkify(e.location)}</span></div>}
                     {e.timeRange && <div className="em"><Clock />{e.timeRange}</div>}
@@ -863,7 +929,7 @@ export default function CalendarPage() {
                     {otherEvents.map(e => {
                       const label = parseLocalDate(e.date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
                       return (
-                        <div key={e.id} className="evt-card" style={canManage ? { cursor: "pointer" } : undefined}
+                        <div key={`${e.id}:${e.date}`} className="evt-card" style={canManage ? { cursor: "pointer" } : undefined}
                           onClick={canManage ? () => setEditingEvent(e) : undefined} title={canManage ? "Click to edit" : undefined}>
                           <div className="et">
                             {eventDot(e)}
@@ -892,20 +958,16 @@ export default function CalendarPage() {
           existing={editingEvent}
           onClose={() => { setAddOpen(false); setEditingEvent(null); }}
           onSaved={(e) => {
-            // Keep it if its month is one of the loaded months (next month counts for Upcoming).
-            const eDate = parseLocalDate(e.date);
-            const inView = monthsKey.split(",").includes(`${eDate.getFullYear()}-${eDate.getMonth() + 1}`);
-            setEvents((prev) => {
-              const rest = prev.filter((x) => x.id !== e.id);
-              return inView ? [...rest, e] : rest;
-            });
+            // Reload rather than splice: a repeating event (or splitting one) changes many days
+            // at once, and only the API knows which occurrences now fall in the loaded months.
+            setReloadTick((t) => t + 1);
             // An event saved under a program that is filtered out would seem to vanish on Save.
             if (hiddenPrograms.has(filterKeyOf(e))) toggleProgram(filterKeyOf(e));
             setAddOpen(false);
             setEditingEvent(null);
           }}
-          onDeleted={(id) => {
-            setEvents((prev) => prev.filter((x) => x.id !== id));
+          onDeleted={() => {
+            setReloadTick((t) => t + 1);
             setEditingEvent(null);
           }}
         />

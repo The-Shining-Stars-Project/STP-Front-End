@@ -16,6 +16,9 @@ export const tasksApi = {
   updateProject: (projectId: string, dto: UpdateProjectDto) =>
     api.put<ProjectDto>(`/api/projects/${projectId}`, dto),
   deleteProject: (projectId: string)         => api.delete<void>(`/api/projects/${projectId}`),
+  /** Annual projects: a copy with every date a year later and tasks back to Upcoming. ManagementWrite. */
+  copyProjectToNextYear: (projectId: string) =>
+    api.post<ProjectDto>(`/api/projects/${projectId}/copy-to-next-year`, {}),
   addTask:       (projectId: string, dto: CreateTaskDto) =>
     api.post<ProjectTaskDto>(`/api/projects/${projectId}/tasks`, dto),
   /** Marking Done records the signed-in user as the completer. */

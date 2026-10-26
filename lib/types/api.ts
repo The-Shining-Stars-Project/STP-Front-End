@@ -9,6 +9,10 @@ export type StaffRole = "Teacher" | "TeacherAssistant" | "Coordinator" | "Techno
 /** Rescheduled / NotScheduled count as marked but are left out of attendance rates; management-only to set. */
 export type AttendanceStatus = "Present" | "Absent" | "Unmarked" | "Rescheduled" | "NotScheduled";
 export type TaskStatus = "Upcoming" | "InProgress" | "Done" | "Overdue" | "Blocked" | "Draft";
+/** How an event or task repeats. "None" = a one-off. */
+export type RepeatFrequency = "None" | "Daily" | "Weekly" | "Monthly" | "Yearly";
+/** Which part of a repeating event an edit or delete covers. */
+export type EventEditScope = "all" | "this" | "following";
 /** Job title a task is meant for (not the login role). Teaching staff only — no Admin. */
 export type TaskRole = "Coordinator" | "SeniorTeachingArtist" | "TeachingArtist" | "AssistantTeachingArtist";
 export type TaskPriority = "High" | "Medium" | "Low";
@@ -1031,6 +1035,10 @@ export interface ProjectTaskDto {
   completedAt: string | null;
   /** Reconstructed from the audit log for tasks finished before tracking began. */
   completionEstimated: boolean;
+  repeatFrequency: RepeatFrequency;
+  repeatInterval: number;
+  repeatWeekdays: number[];
+  repeatUntil: string | null;
 }
 export interface TaskCompletionReportDto {
   year: number;
@@ -1075,6 +1083,11 @@ export interface CreateTaskDto {
   /** Starting status: only "Upcoming" (default), "InProgress", "Blocked" or "Draft" are accepted. */
   status?: TaskStatus;
   role?: TaskRole;
+  /** A repeating task needs a dueDate. */
+  repeatFrequency?: RepeatFrequency;
+  repeatInterval?: number;
+  repeatWeekdays?: number[];
+  repeatUntil?: string;
 }
 
 export interface UpdateTaskDto {
@@ -1089,6 +1102,11 @@ export interface UpdateTaskDto {
   clearDueDate?: boolean;
   role?: TaskRole;
   clearRole?: boolean;
+  /** Sent = the whole new rule ("None" stops repeating); omitted = leave the rule alone. */
+  repeatFrequency?: RepeatFrequency;
+  repeatInterval?: number;
+  repeatWeekdays?: number[];
+  repeatUntil?: string;
 }
 export interface UpdateProjectDto {
   title?: string;
@@ -1159,6 +1177,14 @@ export interface CalendarEventDto {
   /** The sites this event is for — empty means org-wide. */
   siteIds: Guid[];
   siteNames: string[];
+  /** A repeating event comes back once per occurrence: `date` is the occurrence, `id` the series. */
+  repeatFrequency: RepeatFrequency;
+  repeatInterval: number;
+  /** 0 = Sunday … 6 = Saturday; empty = the start's weekday (Weekly only). */
+  repeatWeekdays: number[];
+  repeatUntil: string | null;
+  /** The series' first occurrence (= date for one-off events). */
+  seriesStart: string;
 }
 
 export interface CreateCalendarEventDto {
@@ -1169,6 +1195,11 @@ export interface CreateCalendarEventDto {
   meta?: string;
   timeRange?: string;
   siteIds?: Guid[];
+  repeatFrequency?: RepeatFrequency;
+  repeatInterval?: number;
+  repeatWeekdays?: number[];
+  /** yyyy-MM-dd, inclusive. */
+  repeatUntil?: string;
 }
 
 /** Full replacement of an event's fields. */

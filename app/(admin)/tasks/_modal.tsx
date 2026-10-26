@@ -19,6 +19,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { StaffSummaryDto, ProjectType, TaskRole } from "@/lib/types/api";
+import RepeatPicker from "../components/RepeatPicker";
+import { NO_REPEAT, repeatProblem, type RepeatForm } from "@/lib/repeat";
 import { staffRoleAvatarClass } from "@/lib/staffRoles";
 
 import { describeApiError } from "@/lib/api/client";
@@ -59,6 +61,7 @@ export type Task = {
   completedBy: string | null;
   completedOn: string | null;
   completionEstimated: boolean;
+  repeat: RepeatForm;
   name: string;
   ctx?: string;
   assignedToId: string | null;
@@ -109,10 +112,13 @@ export type AddTaskForm = {
   due: string;
   prio: Prio;
   status: "upcoming" | "inprogress" | "blocked" | "draft" | "done";
+  /** Repeat (Oct 2026): the next task appears when this one is marked Done. Needs a due date. */
+  repeat: RepeatForm;
 };
 
 export const EMPTY_TASK_FORM: AddTaskForm = {
   editingId: null, name: "", ctx: "", projectIdx: null, projectLocked: false, assigneeId: "", role: "", due: "", prio: "med", status: "upcoming",
+  repeat: NO_REPEAT,
 };
 
 /** Shown by the Project field and on the disabled button while no project is chosen. */
@@ -196,7 +202,9 @@ export function AddTaskModal({
   const editing = form.editingId !== null;
   const hasName = form.name.trim().length > 0;
   const hasProject = form.projectIdx !== null;
-  const canSubmit = hasName && hasProject && !saving && !deleting;
+  // Without a due date the picker is disabled and the page sends "doesn't repeat".
+  const repeatError = form.due ? repeatProblem(form.repeat, form.due) : null;
+  const canSubmit = hasName && hasProject && !repeatError && !saving && !deleting;
   const targetProject = form.projectIdx !== null ? projects[form.projectIdx] : null;
   // Closing mid-save would drop the error if the save then failed.
   useEscapeKey(onClose, !saving && !deleting);
@@ -329,6 +337,13 @@ export function AddTaskModal({
             <input type="date" value={form.due} onChange={(e) => setForm((f) => ({ ...f, due: e.target.value }))} style={{ ...inputStyle, width: "55%" }} />
           </div>
 
+          <RepeatPicker
+            value={form.repeat}
+            onChange={(repeat) => setForm((f) => ({ ...f, repeat }))}
+            startIso={form.due || null}
+            disabledReason={form.due ? undefined : "Set a due date to make this task repeat. The next one appears when this one is marked done."}
+          />
+
           <div style={{ display: "flex", gap: "var(--space-5)", flexWrap: "wrap" }}>
             <div>
               <div className="ss-label" style={{ marginBottom: 8 }}>Priority</div>
@@ -415,6 +430,7 @@ export function NewProjectModal({
   onDelete,
   deleting = false,
   taskCount = 0,
+  onCopyToNextYear,
 }: {
   form: NewProjectForm;
   setForm: React.Dispatch<React.SetStateAction<NewProjectForm>>;
@@ -426,11 +442,15 @@ export function NewProjectModal({
   deleting?: boolean;
   /** How many tasks the delete would take with it (edit mode). */
   taskCount?: number;
+  /** "Copy to next year" (edit mode, managers). Resolves when the copy exists. */
+  onCopyToNextYear?: () => Promise<void>;
 }) {
   const editing = form.editingId !== null;
   const hasTitle = form.title.trim().length > 0;
-  const canSubmit = hasTitle && !saving && !deleting;
-  useEscapeKey(onClose, !saving && !deleting);
+  const [copying, setCopying] = useState(false);
+  const busy = saving || deleting || copying;
+  const canSubmit = hasTitle && !busy;
+  useEscapeKey(onClose, !busy);
   const panelRef = useDialogFocus<HTMLDivElement>();
 
   const inputStyle: React.CSSProperties = {
@@ -506,10 +526,19 @@ export function NewProjectModal({
           {editing && onDelete && (
             <DeleteInFooter
               what={taskCount > 0 ? `this project and its ${taskCount} task${taskCount === 1 ? "" : "s"}` : "this project"}
-              onDelete={onDelete} deleting={deleting} disabled={saving}
+              onDelete={onDelete} deleting={deleting} disabled={saving || copying}
             />
           )}
-          <button className="ss-btn" type="button" onClick={onClose} disabled={saving || deleting}>Cancel</button>
+          {/* Annual projects (ASCAP Reporting…): a copy a year later, tasks back to Upcoming. */}
+          {editing && onCopyToNextYear && (
+            <button className="ss-btn" type="button" disabled={busy}
+              title="Make a copy of this project for next year: every date moves a year later and tasks start fresh"
+              onClick={async () => { setCopying(true); try { await onCopyToNextYear(); } finally { setCopying(false); } }}>
+              {copying ? <Loader className="ss-btn-icon" style={{ animation: "spin 1s linear infinite" }} aria-hidden="true" /> : <Calendar className="ss-btn-icon" />}
+              {copying ? "Copying…" : "Copy to next year"}
+            </button>
+          )}
+          <button className="ss-btn" type="button" onClick={onClose} disabled={busy}>Cancel</button>
           <button className="ss-btn ss-btn-primary" type="button" onClick={onSubmit} disabled={!canSubmit}
             title={!hasTitle && !saving ? `Enter a project title to enable ${editing ? "Save" : "Create project"}` : undefined}>
             {saving

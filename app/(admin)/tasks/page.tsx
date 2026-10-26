@@ -17,9 +17,11 @@ import {
   Pencil,
   Hand,
   ShoppingBag,
+  Repeat,
   type LucideIcon,
 } from "lucide-react";
 import CompletionsReport from "./_completions";
+import { repeatFromDto, repeatSummary, repeatToDto } from "@/lib/repeat";
 import { tasksApi } from "@/lib/api/tasks";
 import { useProjects, useStaff, queryKeys } from "@/lib/api/hooks";
 import { useAuth } from "@/lib/auth/AuthProvider";
@@ -155,6 +157,7 @@ function dtoToTask(dto: ProjectTaskDto, staffList: StaffSummaryDto[]): Task {
     // completedAt is org-local "yyyy-MM-ddTHH:mm"; only the date is shown.
     completedOn: dto.completedAt ? formatDueDate(dto.completedAt.slice(0, 10)) : null,
     completionEstimated: dto.completionEstimated,
+    repeat: repeatFromDto(dto),
     name: dto.name,
     ctx: dto.context ?? undefined,
     assignedToId: dto.assignedToId,
@@ -266,6 +269,7 @@ export default function TasksPage() {
         editingId: target.id, name: target.name, ctx: target.ctx ?? "",
         projectIdx: projects.findIndex((p) => p.id === target.projectId), projectLocked: true,
         assigneeId: target.assignedToId ?? "", role: target.role ?? "", due: target.dueIso ?? "", prio: target.prio, status: formStatusOf(target.status),
+        repeat: target.repeat,
       });
       setModalOpen(true);
     }
@@ -359,6 +363,7 @@ export default function TasksPage() {
       due: t.dueIso ?? "",
       prio: t.prio,
       status: formStatusOf(t.status),
+      repeat: t.repeat,
     });
     setTaskError(null);
     setModalOpen(true);
@@ -388,6 +393,9 @@ export default function TasksPage() {
     return (
       <>
         {role && <span className="ss-chip" style={{ fontSize: 11, alignSelf: "flex-start", marginTop: 2 }}>{role}</span>}
+        {t.repeat.frequency !== "None" && !isTaskDone(t) && (
+          <span className="tc"><Repeat style={{ width: 11, height: 11, verticalAlign: -1 }} aria-hidden="true" /> {repeatSummary(t.repeat, t.dueIso)}</span>
+        )}
         {isTaskDone(t) && t.completedBy && (
           <span className="tc" title={t.completionEstimated ? "Estimated from the activity log — finished before completion tracking began" : undefined}>
             <Check style={{ width: 11, height: 11, verticalAlign: -1 }} aria-hidden="true" /> {t.completedBy}{t.completedOn ? ` · ${t.completedOn}` : ""}{t.completionEstimated ? " (est.)" : ""}
@@ -451,6 +459,21 @@ export default function TasksPage() {
     });
     setProjError(null);
     setProjModalOpen(true);
+  }
+
+  // Annual projects (Oct 2026): copy with every date a year later; the copy opens expanded.
+  async function handleCopyProject() {
+    if (!projForm.editingId) return;
+    setProjError(null);
+    try {
+      const copy = await tasksApi.copyProjectToNextYear(projForm.editingId);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+      setCollapsedMap((prev) => ({ ...prev, [copy.id]: false }));
+      setStatusView("open");
+      setProjModalOpen(false);
+    } catch (e) {
+      setProjError(describeApiError(e, "Couldn't copy the project — try again."));
+    }
   }
 
   async function handleDeleteProject() {
@@ -522,6 +545,8 @@ export default function TasksPage() {
           dueDate: form.due || undefined,
           clearDueDate: !form.due,
           taskStatus: STATUS_API_MAP[form.status],
+          // No due date = no repeat (the picker is disabled then, but a cleared date must stop it).
+          ...(form.due ? repeatToDto(form.repeat) : { repeatFrequency: "None" as const }),
         });
       } else {
         await tasksApi.addTask(proj.id, {
@@ -533,6 +558,7 @@ export default function TasksPage() {
           priority: PRIO_API_MAP[form.prio] as "High" | "Medium" | "Low",
           dueDate: form.due || undefined,
           status: STATUS_API_MAP[form.status],
+          ...(form.due ? repeatToDto(form.repeat) : {}),
         });
         setCollapsedMap((prev) => ({ ...prev, [proj.id]: false }));
       }
@@ -880,6 +906,7 @@ export default function TasksPage() {
         <NewProjectModal form={projForm} setForm={setProjForm}
           saving={projSaving} error={projError} onClose={() => { if (!deleting) setProjModalOpen(false); }} onSubmit={handleProjectSubmit}
           onDelete={handleDeleteProject} deleting={deleting}
+          onCopyToNextYear={handleCopyProject}
           taskCount={projects.find((p) => p.id === projForm.editingId)?.tasks.length ?? 0} />
       )}
     </div>
