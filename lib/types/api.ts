@@ -9,6 +9,8 @@ export type StaffRole = "Teacher" | "TeacherAssistant" | "Coordinator" | "Techno
 /** Rescheduled / NotScheduled count as marked but are left out of attendance rates; management-only to set. */
 export type AttendanceStatus = "Present" | "Absent" | "Unmarked" | "Rescheduled" | "NotScheduled";
 export type TaskStatus = "Upcoming" | "InProgress" | "Done" | "Overdue" | "Blocked" | "Draft";
+/** Job title a task is meant for (not the login role). Teaching staff only — no Admin. */
+export type TaskRole = "Coordinator" | "SeniorTeachingArtist" | "TeachingArtist" | "AssistantTeachingArtist";
 export type TaskPriority = "High" | "Medium" | "Low";
 export type ScriptType = "Musical" | "Play" | "Scene" | "Skit";
 export type ScriptStatus = "Active" | "Draft" | "Archived";
@@ -1021,6 +1023,38 @@ export interface ProjectTaskDto {
   priority: TaskPriority;
   dueDate: string | null;
   isOverdue: boolean;
+  role: TaskRole | null;
+  completedByUserId: Guid | null;
+  /** "Former user" when the account has since been deleted. */
+  completedByName: string | null;
+  /** Org-local time, yyyy-MM-ddTHH:mm. */
+  completedAt: string | null;
+  /** Reconstructed from the audit log for tasks finished before tracking began. */
+  completionEstimated: boolean;
+}
+export interface TaskCompletionReportDto {
+  year: number;
+  month: number;
+  people: TaskCompletionPersonDto[];
+  items: TaskCompletionItemDto[];
+}
+export interface TaskCompletionPersonDto {
+  userId: Guid;
+  name: string;
+  total: number;
+  estimated: number;
+  /** Count per TaskRole name, plus "None" for tasks without a role. */
+  byRole: Partial<Record<TaskRole | "None", number>>;
+}
+export interface TaskCompletionItemDto {
+  taskId: Guid;
+  taskName: string;
+  projectTitle: string;
+  role: TaskRole | null;
+  userId: Guid;
+  name: string;
+  completedAt: string;
+  estimated: boolean;
 }
 
 export interface CreateProjectDto {
@@ -1038,8 +1072,9 @@ export interface CreateTaskDto {
   assignedToId?: Guid;
   priority?: TaskPriority;
   dueDate?: string;
-  /** Starting status: only "Upcoming" (default), "InProgress" or "Blocked" are accepted. */
+  /** Starting status: only "Upcoming" (default), "InProgress", "Blocked" or "Draft" are accepted. */
   status?: TaskStatus;
+  role?: TaskRole;
 }
 
 export interface UpdateTaskDto {
@@ -1052,6 +1087,8 @@ export interface UpdateTaskDto {
   /** Omitted/null fields are left alone server-side, so clearing needs these flags. */
   clearAssignee?: boolean;
   clearDueDate?: boolean;
+  role?: TaskRole;
+  clearRole?: boolean;
 }
 export interface UpdateProjectDto {
   title?: string;
@@ -1508,7 +1545,8 @@ export type AuditExportKind =
   | "star-attendance"
   | "participant-roster"
   | "stars-detail"
-  | "staff-onboarding";
+  | "staff-onboarding"
+  | "task-completions";
 
 /** What the client reports after building a CSV in the browser. */
 export interface RecordExportDto {

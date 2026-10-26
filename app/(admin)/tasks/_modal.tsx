@@ -18,7 +18,7 @@ import {
   Calendar,
   type LucideIcon,
 } from "lucide-react";
-import type { StaffSummaryDto, ProjectType } from "@/lib/types/api";
+import type { StaffSummaryDto, ProjectType, TaskRole } from "@/lib/types/api";
 import { staffRoleAvatarClass } from "@/lib/staffRoles";
 
 import { describeApiError } from "@/lib/api/client";
@@ -39,9 +39,26 @@ export const TAG: Record<TaskStatus, { icon: LucideIcon; label: string }> = {
   draft:      { icon: PenLine,      label: "Draft" },
 };
 
+/**
+ * Job-title roles a task can be for (Rachel, Oct 2026). Teaching staff only, so no Admin.
+ * Order is the picker's order; labels are what staff see.
+ */
+export const TASK_ROLES: { value: TaskRole; label: string; short: string }[] = [
+  { value: "Coordinator",             label: "Coordinator",               short: "Coordinator" },
+  { value: "SeniorTeachingArtist",    label: "Senior Teaching Artist",    short: "Senior" },
+  { value: "TeachingArtist",          label: "Teaching Artist",           short: "Teaching" },
+  { value: "AssistantTeachingArtist", label: "Assistant Teaching Artist", short: "Assistant" },
+];
+export const roleLabel = (r: TaskRole | null | undefined) => TASK_ROLES.find((x) => x.value === r)?.label ?? null;
+
 export type Task = {
   id: string;
   projectId: string;
+  role: TaskRole | null;
+  /** Who marked it Done and when (display strings); null while open or for untracked history. */
+  completedBy: string | null;
+  completedOn: string | null;
+  completionEstimated: boolean;
   name: string;
   ctx?: string;
   assignedToId: string | null;
@@ -87,13 +104,15 @@ export type AddTaskForm = {
   /** Opened from a project's own "Add task to …" row (or the only project): no picker. */
   projectLocked: boolean;
   assigneeId: string;
+  /** "" = no role. */
+  role: TaskRole | "";
   due: string;
   prio: Prio;
   status: "upcoming" | "inprogress" | "blocked" | "draft" | "done";
 };
 
 export const EMPTY_TASK_FORM: AddTaskForm = {
-  editingId: null, name: "", ctx: "", projectIdx: null, projectLocked: false, assigneeId: "", due: "", prio: "med", status: "upcoming",
+  editingId: null, name: "", ctx: "", projectIdx: null, projectLocked: false, assigneeId: "", role: "", due: "", prio: "med", status: "upcoming",
 };
 
 /** Shown by the Project field and on the disabled button while no project is chosen. */
@@ -269,6 +288,24 @@ export function AddTaskModal({
           <div>
             <div className="ss-label" style={{ marginBottom: 6 }}>Context <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional — e.g. Wardrobe, HR</span></div>
             <input type="text" placeholder="e.g. Wardrobe" value={form.ctx} onChange={(e) => setForm((f) => ({ ...f, ctx: e.target.value }))} style={inputStyle} />
+          </div>
+
+          {/* Role (Rachel, Oct 2026): the job title this task is for. With nobody assigned it
+              lands in the Grab bag, where any staff member can take it. */}
+          <div>
+            <div className="ss-label" style={{ marginBottom: 8 }}>Role <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional — leave Assignee empty to put it in the Grab bag</span></div>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }} role="group" aria-label="Role">
+              <button type="button" className={`ss-chip${form.role === "" ? " is-active" : ""}`} aria-pressed={form.role === ""} style={{ cursor: "pointer", minHeight: 34 }}
+                onClick={() => setForm((f) => ({ ...f, role: "" }))}>
+                No role
+              </button>
+              {TASK_ROLES.map((r) => (
+                <button key={r.value} type="button" className={`ss-chip${form.role === r.value ? " is-active" : ""}`} aria-pressed={form.role === r.value} style={{ cursor: "pointer", minHeight: 34 }}
+                  onClick={() => setForm((f) => ({ ...f, role: r.value }))}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div>

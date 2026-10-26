@@ -15,8 +15,11 @@ import {
   ChevronDown,
   Check,
   Pencil,
+  Hand,
+  ShoppingBag,
   type LucideIcon,
 } from "lucide-react";
+import CompletionsReport from "./_completions";
 import { tasksApi } from "@/lib/api/tasks";
 import { useProjects, useStaff, queryKeys } from "@/lib/api/hooks";
 import { useAuth } from "@/lib/auth/AuthProvider";
@@ -42,6 +45,8 @@ import {
   type TaskStatus,
   type Prio,
   TAG,
+  TASK_ROLES,
+  roleLabel,
 } from "./_modal";
 
 // ── Mapping helpers ───────────────────────────────────────────────────────────
@@ -145,6 +150,11 @@ function dtoToTask(dto: ProjectTaskDto, staffList: StaffSummaryDto[]): Task {
   return {
     id: dto.id,
     projectId: dto.projectId,
+    role: dto.role,
+    completedBy: dto.completedByName,
+    // completedAt is org-local "yyyy-MM-ddTHH:mm"; only the date is shown.
+    completedOn: dto.completedAt ? formatDueDate(dto.completedAt.slice(0, 10)) : null,
+    completionEstimated: dto.completionEstimated,
     name: dto.name,
     ctx: dto.context ?? undefined,
     assignedToId: dto.assignedToId,
@@ -226,7 +236,11 @@ export default function TasksPage() {
   const [projError, setProjError] = useState<string | null>(null);
   // Shared by both modals: only one can be open at a time.
   const [deleting, setDeleting] = useState(false);
-  const [view, setView] = useState<"project" | "my" | "all">("project");
+  // "completed" = the Completed-by report (managers only; the API is ManagementWrite).
+  const [view, setView] = useState<"project" | "my" | "all" | "completed">("project");
+  // Grab bag (Rachel, Oct 2026): open tasks with a role and nobody assigned, for anyone to take.
+  const [grabBagOnly, setGrabBagOnly] = useState(false);
+  const [taking, setTaking] = useState<string | null>(null);
   // Open by default so finished tasks disappear (client, Oct 2026).
   const [statusView, setStatusView] = useState<StatusView>("open");
   const [typeFilter, setTypeFilter] = useState<"all" | "production" | "staff" | "admin" | "event">("all");
@@ -251,7 +265,7 @@ export default function TasksPage() {
       setForm({
         editingId: target.id, name: target.name, ctx: target.ctx ?? "",
         projectIdx: projects.findIndex((p) => p.id === target.projectId), projectLocked: true,
-        assigneeId: target.assignedToId ?? "", due: target.dueIso ?? "", prio: target.prio, status: formStatusOf(target.status),
+        assigneeId: target.assignedToId ?? "", role: target.role ?? "", due: target.dueIso ?? "", prio: target.prio, status: formStatusOf(target.status),
       });
       setModalOpen(true);
     }
@@ -341,12 +355,66 @@ export default function TasksPage() {
       projectIdx: projectIdx >= 0 ? projectIdx : null,
       projectLocked: true,
       assigneeId: t.assignedToId ?? "",
+      role: t.role ?? "",
       due: t.dueIso ?? "",
       prio: t.prio,
       status: formStatusOf(t.status),
     });
     setTaskError(null);
     setModalOpen(true);
+  }
+
+  // A grab-bag task: has a role, nobody on it yet, still open.
+  const isGrabBag = (t: Task) => t.role !== null && t.assignedToId === null && !isTaskDone(t);
+
+  async function takeTask(t: Task) {
+    setTaking(t.id);
+    setSaveError(null);
+    try {
+      await tasksApi.takeTask(t.id);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+    } catch (e) {
+      // 409s carry the reason: someone else took it, or the login isn't linked to staff.
+      setSaveError(describeApiError(e, "Couldn't take that task — try again."));
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+    } finally {
+      setTaking(null);
+    }
+  }
+
+  // Name cell extras: the role chip, and on finished tasks who checked it off.
+  function taskMeta(t: Task) {
+    const role = roleLabel(t.role);
+    return (
+      <>
+        {role && <span className="ss-chip" style={{ fontSize: 11, alignSelf: "flex-start", marginTop: 2 }}>{role}</span>}
+        {isTaskDone(t) && t.completedBy && (
+          <span className="tc" title={t.completionEstimated ? "Estimated from the activity log — finished before completion tracking began" : undefined}>
+            <Check style={{ width: 11, height: 11, verticalAlign: -1 }} aria-hidden="true" /> {t.completedBy}{t.completedOn ? ` · ${t.completedOn}` : ""}{t.completionEstimated ? " (est.)" : ""}
+          </span>
+        )}
+      </>
+    );
+  }
+
+  // Assignee cell: a person, or for grab-bag tasks a "Take it" button.
+  function assigneeCell(t: Task) {
+    if (isGrabBag(t)) {
+      return (
+        <button type="button" className="ss-btn" disabled={taking === t.id} style={{ minHeight: 34 }}
+          title="Assign this task to yourself"
+          onClick={(e) => { e.stopPropagation(); takeTask(t); }}
+          onKeyDown={(e) => e.stopPropagation()}>
+          <Hand className="ss-btn-icon" />{taking === t.id ? "Taking…" : "Take it"}
+        </button>
+      );
+    }
+    return (
+      <span className="assignee">
+        <span className={`ss-avatar ${t.ar} sm`}>{t.ai}</span>
+        <span>{t.an}</span>
+      </span>
+    );
   }
 
   async function handleDeleteTask() {
@@ -446,6 +514,8 @@ export default function TasksPage() {
         await tasksApi.updateTask(form.editingId, {
           name: form.name.trim(),
           context: form.ctx.trim(),
+          role: form.role || undefined,
+          clearRole: !form.role,
           assignedToId: form.assigneeId || undefined,
           clearAssignee: !form.assigneeId,
           priority: PRIO_API_MAP[form.prio] as "High" | "Medium" | "Low",
@@ -458,6 +528,7 @@ export default function TasksPage() {
           projectId: proj.id,
           name: form.name.trim(),
           context: form.ctx.trim() || undefined,
+          role: form.role || undefined,
           assignedToId: form.assigneeId || undefined,
           priority: PRIO_API_MAP[form.prio] as "High" | "Medium" | "Low",
           dueDate: form.due || undefined,
@@ -498,6 +569,9 @@ export default function TasksPage() {
             <button className={view === "project" ? "is-active" : ""} onClick={() => setView("project")}>By project</button>
             <button className={view === "my" ? "is-active" : ""} onClick={() => setView("my")}>My tasks</button>
             <button className={view === "all" ? "is-active" : ""} onClick={() => setView("all")}>All tasks</button>
+            {canManage && (
+              <button className={view === "completed" ? "is-active" : ""} onClick={() => setView("completed")} title="Who completed which tasks, per month">Completed by</button>
+            )}
           </div>
           {canManage && (
             <button className="ss-btn" type="button" onClick={openProjModal}>
@@ -511,6 +585,7 @@ export default function TasksPage() {
       </div>
 
       <div className="adm-content">
+        {view === "completed" && canManage ? <CompletionsReport /> : (<>
         <div className="row tight" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {([ ["all", "All projects"], ["production", "Productions"], ["staff", "Staff tasks"], ["admin", "Admin"] ] as [typeof typeFilter, string][]).map(([val, label]) => (
             <span
@@ -562,6 +637,13 @@ export default function TasksPage() {
           >
             <AlertCircle style={{ width: 12, height: 12 }} />Overdue
           </span>
+          {/* Grab bag (Rachel, Oct 2026): open tasks with a role and nobody assigned. */}
+          <button type="button" className={`ss-chip${grabBagOnly ? " is-active" : ""}`} aria-pressed={grabBagOnly} style={{ cursor: "pointer", minHeight: 34 }}
+            title={`Open tasks for a role (${TASK_ROLES.map((r) => r.short).join(", ")}) that nobody has taken yet`}
+            onClick={() => setGrabBagOnly((v) => !v)}>
+            <ShoppingBag style={{ width: 12, height: 12 }} aria-hidden="true" />Grab bag
+            {grabBagOnly && <Check style={{ width: 12, height: 12 }} aria-hidden="true" />}
+          </button>
         </div>
 
         <div className="board-stats">
@@ -614,6 +696,7 @@ export default function TasksPage() {
               if (!matchesAssignee(t)) return false;
               if (!matchesStatusView(t)) return false;
               if (overdueOnly && !(t.overdue || t.status === "overdue")) return false;
+              if (grabBagOnly && !isGrabBag(t)) return false;
               return true;
             });
 
@@ -644,15 +727,11 @@ export default function TasksPage() {
                           <div className="task-name">
                             <span className="tn">{t.name}</span>
                             <span className="tc">{p.title}{t.ctx ? ` · ${t.ctx}` : ""}</span>
+                            {taskMeta(t)}
                           </div>
                         </td>
-                        {view === "all" && (
-                          <td>
-                            <span className="assignee">
-                              <span className={`ss-avatar ${t.ar} sm`}>{t.ai}</span>
-                              <span>{t.an}</span>
-                            </span>
-                          </td>
+                        {(view === "all" || isGrabBag(t)) && (
+                          <td>{assigneeCell(t)}</td>
                         )}
                         <td className={`td-due ${t.overdue ? "overdue" : ""}`}>{t.due}</td>
                         <td>
@@ -679,6 +758,7 @@ export default function TasksPage() {
               if (!projectMatchesStatusView(p)) return false;
               if (assigneeFilter !== ALL_ASSIGNEES && !p.tasks.some(matchesAssignee)) return false;
               if (overdueOnly && !p.tasks.some((t) => t.overdue || t.status === "overdue")) return false;
+              if (grabBagOnly && !p.tasks.some(isGrabBag)) return false;
               return true;
             });
 
@@ -693,7 +773,9 @@ export default function TasksPage() {
           // A person (or Unassigned) filter narrows the rows too, not just which projects show.
           // Under Open, a project's finished tasks are hidden with it; a done project under Done
           // shows everything it had.
-          const rows = p.tasks.filter((t) => matchesAssignee(t) && (statusView === "done" && p.status[0] === "done" ? true : matchesStatusView(t)));
+          const rows = p.tasks.filter((t) => matchesAssignee(t)
+            && (statusView === "done" && p.status[0] === "done" ? true : matchesStatusView(t))
+            && (!grabBagOnly || isGrabBag(t)));
           return (
             <div className={`proj${isCollapsed(p.id) ? " is-collapsed" : ""}`} key={p.id}>
               <div className="proj-head" onClick={() => toggleProject(p.id)}>
@@ -747,14 +829,10 @@ export default function TasksPage() {
                               <div className="task-name">
                                 <span className="tn">{t.name}</span>
                                 {t.ctx ? <span className="tc">{t.ctx}</span> : null}
+                                {taskMeta(t)}
                               </div>
                             </td>
-                            <td>
-                              <span className="assignee">
-                                <span className={`ss-avatar ${t.ar} sm`}>{t.ai}</span>
-                                <span>{t.an}</span>
-                              </span>
-                            </td>
+                            <td>{assigneeCell(t)}</td>
                             <td className={`td-due ${t.overdue ? "overdue" : ""}`}>{t.due}</td>
                             <td>
                               <span className={`tag ${t.status}`}>
@@ -786,6 +864,7 @@ export default function TasksPage() {
             <FolderPlus />Create new project
           </button>
         )}
+        </>)}
       </div>
 
       {modalOpen && (
