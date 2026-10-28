@@ -17,7 +17,7 @@ const columnLabel = (c: TaskRole | "None") => (c === "None" ? "No role" : TASK_R
 
 /**
  * Completed by (Rachel, Oct 2026): who finished which tasks in a month, per job-title role —
- * for annual evaluations. Managers only (the API is ManagementWrite and audits every read).
+ * for annual evaluations. Visible to all staff by client decision (Oct 27); the API audits every read.
  * Months are org-local. Rows reconstructed from the audit log for tasks finished before
  * tracking began are marked "est." and counted separately so nobody mistakes them for exact.
  */

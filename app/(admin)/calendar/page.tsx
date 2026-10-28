@@ -145,6 +145,9 @@ function formFrom(e: CalendarEventDto): EventForm {
 
 const isRepeating = (e: CalendarEventDto) => e.repeatFrequency !== "None";
 
+/** Must match CalendarService.MaxTitle / MaxTime / MaxLocation / MaxDetails in the API. */
+const EVENT_LIMITS = { title: 300, time: 50, location: 200, details: 300 };
+
 const SCOPES: { value: EventEditScope; label: string }[] = [
   { value: "this", label: "This event" },
   { value: "following", label: "This and following" },
@@ -185,7 +188,10 @@ function EventModal({
   const series = existing !== null && isRepeating(existing);
   const [askScope, setAskScope] = useState<null | "save" | "delete">(null);
   const repeatError = repeatProblem(form.repeat, form.date);
-  const canSubmit = form.title.trim().length > 0 && form.date !== "" && !repeatError && !saving && !deleting;
+  // The API's column limits (CalendarService.Max*). Details over the limit used to fail as a
+  // misleading "conflicts with data already saved" (Vera, Oct 21).
+  const detailsTooLong = form.details.trim().length > EVENT_LIMITS.details;
+  const canSubmit = form.title.trim().length > 0 && form.date !== "" && !repeatError && !detailsTooLong && !saving && !deleting;
   useEscapeKey(() => { if (askScope) setAskScope(null); else onClose(); }, !saving && !deleting);
 
   function toggleSite(id: string) {
@@ -260,7 +266,7 @@ function EventModal({
         <div style={{ padding: "var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-4)", overflowY: "auto" }}>
           <div>
             <div className="ss-label" style={{ marginBottom: 6 }}>Title <span style={{ color: "var(--danger)", fontWeight: 400 }}>*</span></div>
-            <input type="text" placeholder="e.g. MJC Session" value={form.title}
+            <input type="text" placeholder="e.g. MJC Session" value={form.title} maxLength={EVENT_LIMITS.title}
               onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))}
               style={inputStyle} autoFocus />
           </div>
@@ -295,13 +301,13 @@ function EventModal({
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
             <div>
               <div className="ss-label" style={{ marginBottom: 6 }}>Time <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
-              <input type="text" placeholder="9:00 – 11:30 AM" value={form.timeRange}
+              <input type="text" placeholder="9:00 – 11:30 AM" value={form.timeRange} maxLength={EVENT_LIMITS.time}
                 onChange={(e) => setForm(f => ({ ...f, timeRange: e.target.value }))}
                 style={inputStyle} />
             </div>
             <div>
               <div className="ss-label" style={{ marginBottom: 6 }}>Location <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional</span></div>
-              <input type="text" placeholder="Room B / FH 152" value={form.location}
+              <input type="text" placeholder="Room B / FH 152" value={form.location} maxLength={EVENT_LIMITS.location}
                 onChange={(e) => setForm(f => ({ ...f, location: e.target.value }))}
                 style={inputStyle} />
             </div>
@@ -311,7 +317,14 @@ function EventModal({
             <div className="ss-label" style={{ marginBottom: 6 }}>Details / link <span style={{ fontSize: 11, color: "var(--fg-tertiary)", fontWeight: 400 }}>Optional — links become clickable</span></div>
             <textarea rows={3} placeholder="Zoom link, what to bring, who to contact…" value={form.details}
               onChange={(e) => setForm(f => ({ ...f, details: e.target.value }))}
-              style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+              aria-describedby="event-details-count"
+              style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", ...(detailsTooLong ? { borderColor: "var(--danger)" } : {}) }} />
+            <div id="event-details-count" aria-live="polite"
+              style={{ marginTop: 4, fontSize: 11, textAlign: "right", color: detailsTooLong ? "var(--danger)" : "var(--fg-tertiary)" }}>
+              {detailsTooLong
+                ? `${form.details.trim().length} / ${EVENT_LIMITS.details} — shorten the details to save (put longer notes on the star's profile)`
+                : `${form.details.trim().length} / ${EVENT_LIMITS.details}`}
+            </div>
           </div>
 
           <RepeatPicker value={form.repeat} onChange={(repeat) => setForm((f) => ({ ...f, repeat }))} startIso={form.date || null} />
@@ -364,7 +377,8 @@ function EventModal({
           )}
           <span style={{ flex: 1 }} />
           <button className="ss-btn" type="button" onClick={onClose} disabled={saving || deleting}>Cancel</button>
-          <button className="ss-btn ss-btn-primary" type="button" disabled={!canSubmit} onClick={() => handleSubmit()}>
+          <button className="ss-btn ss-btn-primary" type="button" disabled={!canSubmit} onClick={() => handleSubmit()}
+            title={detailsTooLong ? `Details are over ${EVENT_LIMITS.details} characters — shorten them to save` : undefined}>
             {editing ? <Check className="ss-btn-icon" /> : <Plus className="ss-btn-icon" />}
             {saving ? "Saving…" : editing ? "Save changes" : "Add event"}
           </button>

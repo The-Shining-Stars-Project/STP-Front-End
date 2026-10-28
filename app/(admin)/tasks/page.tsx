@@ -239,7 +239,8 @@ export default function TasksPage() {
   const [projError, setProjError] = useState<string | null>(null);
   // Shared by both modals: only one can be open at a time.
   const [deleting, setDeleting] = useState(false);
-  // "completed" = the Completed-by report (managers only; the API is ManagementWrite).
+  // "completed" = the Completed-by report. Open to all staff (Rachel, Oct 27: teammates pick up
+  // each other's tasks, so seeing who finished what is fine).
   const [view, setView] = useState<"project" | "my" | "all" | "completed">("project");
   // Grab bag (Rachel, Oct 2026): open tasks with a role and nobody assigned, for anyone to take.
   const [grabBagOnly, setGrabBagOnly] = useState(false);
@@ -595,9 +596,7 @@ export default function TasksPage() {
             <button className={view === "project" ? "is-active" : ""} onClick={() => setView("project")}>By project</button>
             <button className={view === "my" ? "is-active" : ""} onClick={() => setView("my")}>My tasks</button>
             <button className={view === "all" ? "is-active" : ""} onClick={() => setView("all")}>All tasks</button>
-            {canManage && (
-              <button className={view === "completed" ? "is-active" : ""} onClick={() => setView("completed")} title="Who completed which tasks, per month">Completed by</button>
-            )}
+            <button className={view === "completed" ? "is-active" : ""} onClick={() => setView("completed")} title="Who completed which tasks, per month">Completed by</button>
           </div>
           {canManage && (
             <button className="ss-btn" type="button" onClick={openProjModal}>
@@ -611,7 +610,7 @@ export default function TasksPage() {
       </div>
 
       <div className="adm-content">
-        {view === "completed" && canManage ? <CompletionsReport /> : (<>
+        {view === "completed" ? <CompletionsReport /> : (<>
         <div className="row tight" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {([ ["all", "All projects"], ["production", "Productions"], ["staff", "Staff tasks"], ["admin", "Admin"] ] as [typeof typeFilter, string][]).map(([val, label]) => (
             <span
